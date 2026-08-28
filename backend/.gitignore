@@ -3,3 +3,4 @@
 .DS_Store
 *.log
 harness.db
+.claude/settings.local.json
