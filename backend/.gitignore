@@ -3,4 +3,12 @@
 .DS_Store
 *.log
 harness.db
-.claude/settings.local.json
+.claude/
+.codex/
+scripts/
+.harness.json
+init.sh
+migrations/
+AGENTS.md
+CLAUDE.md
+CHECKPOINTS.md

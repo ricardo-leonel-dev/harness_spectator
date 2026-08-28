@@ -6,4 +6,11 @@ src/environments/environment.ts
 *.log
 .DS_Store
 harness.db
-.claude/settings.local.json
+.claude/
+.codex/
+scripts/
+.harness.json
+init.sh
+AGENTS.md
+CLAUDE.md
+CHECKPOINTS.md
