@@ -1,0 +1,56 @@
+# Review — feature 2 (`upgrade_angular_latest`)
+
+**Verdict:** APPROVED
+
+## Checkpoints
+
+- C1: [x] — `.harness.json`, `harness.db` exist; `docs/{architecture,conventions,verification,specs}.md` and `CHECKPOINTS.md` are filled in (not template placeholders); `./init.sh` exits 0 with `[OK] Environment ready`.
+- C2: [x] — At most one `in_progress` feature (only feature 2; feature 1 is `done`, feature 3 is `spec_drafting`); the open session reflects real, current work — the implementer's log shows T1–T13 actually executed against this feature, not a stale leftover; verify is genuinely green (not prose).
+- C3: [x] — `frontend/src/app/` layers (`auth/`, `dashboard/`, `core/`) untouched by feature scope; new deps (`typescript-eslint@8`, `istanbul-lib-instrument`) are within the architecture's allowlist (the former is explicitly listed, the latter is a peer dep of the already-present `karma-coverage`); no stray `print`/`console.log`/orphaned TODOs in the changed files.
+- C4: [x] — Verify is real, not asserted: I re-ran it. Frontend slice (lint, build, 5/5 Karma tests SUCCESS) and backend slice (fmt, clippy, build, 4 unit tests in `backend/src/auth/jwt.rs` + 5 integration tests in `backend/tests/harness.rs`, all pass when `DATABASE_URL` is exported per `.harness.json`'s `verify_command`). `./init.sh` end-to-end exits 0; the only stderr line is the expected `[WARN]` from `scripts/sync_postgres.sh` when no Supabase mirror is configured (unrelated to this feature).
+- C5: [x] — No stray untracked/temp files. The implementer correctly did not run `scripts/harness.sh log-out` (per leader's instruction and `AGENTS.md` §0); session remains open awaiting this approval. **Hygiene nit:** the session log's `Next Step` is stale — still reads "Await user to either install Node v22.22.3+ (e.g. nvm install 22.22.3)..." even though T9–T13 are `[x]` and the work is complete. This will be refreshed when the implementer runs `log-out` after this approval. Flagging here so it isn't forgotten.
+- C6: [x] — `specs/upgrade_angular_latest/{requirements.md,design.md,tasks.md}` all exist; requirements are in strict EARS with stable `R<n>` ids; all 13 tasks in `tasks.md` are `[x]`; every `R<n>` maps to evidence I verified directly (see "R<n> trace" below).
+
+## Verification performed (not just prose)
+
+I activated Node 22.23.2 in every Bash call (per the leader's note about PATH shadowing from `~/.local/share/nvm`) and re-ran everything:
+
+- `./init.sh` end-to-end → exit 0, ends with `[OK] Environment ready. You can start working.` Snapshot regenerated; only stderr noise is the unrelated `bootstrap_project sync failed` `[WARN]` from the Postgres mirror step.
+- `npm --prefix frontend run lint` → `All files pass linting.`
+- `npm --prefix frontend run build` → bundle emitted (`505.25 kB` initial), 2.07s.
+- `npm --prefix frontend run test -- --watch=false --browsers=ChromeHeadless` → `TOTAL: 5 SUCCESS` (3 in `login-page.component.spec.ts`, 2 in `dashboard-page.component.spec.ts`).
+- `cd backend && cargo fmt --check` → clean.
+- `cd backend && cargo clippy --all-targets -- -D warnings` → clean (the `sqlx-postgres v0.7.4` future-incompat note is an upstream package warning, not project code; out of scope).
+- `cd backend && cargo test` with `DATABASE_URL` exported per `.harness.json` → 4 unit tests + 5 integration tests, all pass (`state_with_valid_token_returns_200_and_seeded_data`, `state_without_auth_header_returns_401_and_no_state`, `state_with_wrong_signature_returns_401`, `state_with_expired_token_returns_401`, `reader_performs_only_select_queries`).
+- File-level spot checks confirmed in `frontend/package.json`: `@angular/{common,core,forms,platform-browser,platform-browser-dynamic,router,compiler,compiler-cli}` all `^22.1.4`; `@angular/{cli,devkit/build-angular}` `^22.1.6`; `angular-eslint ^22.1.0`; `typescript ~6.0.3` (satisfies R11's `>=6.0.0`); `eslint ^10.9.1`; `typescript-eslint ^8.0.0`; `zone.js ~0.15.1`; no legacy `@typescript-eslint/eslint-plugin@^7` / `@typescript-eslint/parser@^7` anywhere in `package.json`.
+- `frontend/.eslintrc.json` confirmed deleted; `frontend/eslint.config.js` confirmed created and matches design.md's specified rule set (directive-selector/component-selector with prefix `app`, `no-unused-vars` with `argsIgnorePattern: '^_'`, `*.spec.ts` `no-explicit-any: off`).
+- `frontend/src/app/app.config.ts` line 11 confirmed: `provideZoneChangeDetection({ eventCoalescing: true })` is still explicit (R10 guard).
+- `npm ls typescript-eslint @typescript-eslint/eslint-plugin @typescript-eslint/parser` from `frontend/`: only `typescript-eslint@8.68.0` (umbrella) with nested `@typescript-eslint/{eslint-plugin,parser}@8.68.0`; no v7 packages. `npm install --dry-run` returns no peer warnings. `npm install` returns "up to date" with no warnings.
+- All 7 components flipped to `ChangeDetectionStrategy.OnPush`: `app.component.ts`, `auth/login-page.component.ts`, `dashboard/blocked-features-card.component.ts`, `dashboard/dashboard-page.component.ts`, `dashboard/features-table.component.ts`, `dashboard/open-session-card.component.ts`, `dashboard/status-badge.component.ts`. Confirmed each one is either signal-driven or pure `@Input()` presentation (see "Scope assessment" below).
+
+## R<n> trace (verified, not trusted)
+
+- **R1** → `frontend/package.json` `@angular/{common,core,forms,platform-browser,platform-browser-dynamic,router} ^22.1.4`, `@angular/{cli,compiler,compiler-cli} ^22.x`, `angular-eslint ^22.1.0`. (R3, R5, R7 use the same evidence at the same major; all met.)
+- **R2/R4/R6/R8** → per-stage verify slices, all runnable in one combined invocation through `./init.sh`: frontend `ng lint`/`ng build`/`ng test` + backend `cargo fmt`/`clippy`/`build`/`test`. Verified green above.
+- **R9** → `frontend/eslint.config.js` present with the prescribed rule set; `frontend/.eslintrc.json` absent; `npm --prefix frontend run lint` exits 0 against the new config.
+- **R10** → `frontend/src/app/app.config.ts:11` still has `provideZoneChangeDetection({ eventCoalescing: true })`. Direct grep confirmed.
+- **R11** → `frontend/package.json` `typescript ~6.0.3` satisfies `>=6.0.0`. Direct read confirmed.
+
+## Coordinator's specific concerns (explicit assessment)
+
+1. **Did T9's `--force` leave a real peer conflict?** No. `--force` was used in T9 because the `ng update` peer-check refused to proceed while the legacy `@typescript-eslint/eslint-plugin@7` / `@typescript-eslint/parser@7` (ESLint-v8-only) were still pinned. T11 deleted the legacy packages and added the `typescript-eslint@8.0.0` umbrella that `angular-eslint@22` requires. The current dep tree (`npm ls`) shows only `typescript-eslint@8.68.0` with nested `@typescript-eslint/{eslint-plugin,parser}@8.68.0` — no v7 packages remain. `npm install --dry-run` produces no peer warnings. `npm install` reports "up to date" with no warnings. The conflict that `--force` papered over is genuinely resolved, not hidden.
+
+2. **Eager→OnPush scope and test coverage.** This is the only judgment call in the implementation.
+   - **(a) Justification against the approved spec:** `design.md` ("Current state (verified against the live repo, not assumed)") explicitly analyzed the codebase before spec approval and concluded: "All reactive component state is signal-based (`signal`/`computed` in `AuthService` and `DashboardPageComponent`; templates read via signal calls)... This is exactly the pattern that keeps working correctly once Angular v22 flips the default `Component.changeDetection` to `OnPush`... verified no component in this codebase relies on `Default` change detection's 'any leaf mutation triggers a full check' behavior (no unguarded plain-field mutation feeding a template outside a signal)." The 7 components I inspected match this characterization exactly: `LoginPageComponent` and `DashboardPageComponent` are signal-driven; `FeaturesTableComponent`, `OpenSessionCardComponent`, `BlockedFeaturesCardComponent`, `StatusBadgeComponent` are pure `@Input()` presentation components whose data flow is parent-signal → parent-template re-eval → child-input reassign → OnPush re-render. OnPush is the semantically correct choice for this codebase.
+   - **(b) Scope vs. approved R<n>:** Strictly, no R<n> says "convert Eager to OnPush". However: (i) R7 brings in `@angular/* ^22.x`, whose migration schematic is what inserted `Eager` in the first place — overriding a schematic decision is in scope of completing the upgrade; (ii) `design.md`'s explicit escape clause ("any additional file the implementer finds necessary during a given stage ... is still in scope — R2/R4/R6/R8's 'verify green' requirement is the actual acceptance bar per stage, not this file list") covers this; (iii) R9's flat config + the new `angular-eslint` `tsRecommended` config implicitly aligns with OnPush as v22's default.
+   - **(c) Test coverage adequacy:** The 5 Karma tests do not directly assert "OnPush triggers CD correctly" — they assert observable behavior. Two of the three relevant tests (`dashboard-page.component.spec.ts`) do exercise signal-driven rendering end-to-end (the HTTP response flush triggers `features.set(...)` and the subsequent `fixture.detectChanges()` reads the rendered textContent), which is the precise scenario where OnPush would silently fail if it were wrong. The presentation components are exercised transitively via `textContent` assertions on the data they receive. This is adequate to back the change for THIS app, given design.md's pre-implementation signal-driven analysis — but it's not a formal proof of equivalence between OnPush and Default for arbitrary UI mutations. I would have preferred an explicit `R<n>` calling out the change, but the implementer's disclosure in the report (T11 paragraph) and the design.md justification make this acceptable rather than a blocker.
+
+3. **Stale `Next Step` in session 5 log.** Confirmed — the log still reads "Await user to either install Node v22.22.3+..." despite T9–T13 being `[x]`. This is because the implementer followed the leader's explicit instruction not to run `log-out`, and the harness doesn't auto-refresh `Next Step` on `append-log`. Hygiene-only; will be corrected when the implementer runs `log-out` after this approval.
+
+## Recommendation for the leader (acknowledged, not blocking)
+
+The implementer's recommendation about `.harness.json`'s `verify_command` is sound and complete. The current state — `.nvmrc` at the repo root pinning `22.23.2` but no Node/PATH pin baked into `.harness.json`'s `verify_command` — means the next session will hit the same shadowing problem (`~/.local/share/nvm/v22.19.0/bin` precedes `~/.nvm/versions/node/v22.23.2/bin` in PATH, so a fresh shell's `node -v` returns `v22.19.0`). The implementer correctly documented both options (a) uninstall the secondary nvm and (b) bake the PATH override into `.harness.json`'s `verify_command` — without applying either, deferring to the leader per `AGENTS.md` §0. No action required from the reviewer; flagging so the leader can decide before the next session starts.
+
+## Required Changes (if applicable)
+
+None. Implementation is approved; the implementer may now run `scripts/harness.sh log-out` and refresh the session's stale `Next Step` text at the same time.

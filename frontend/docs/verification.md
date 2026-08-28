@@ -3,48 +3,45 @@
 > Golden rule: the agent doesn't say "it works," it proves it. Every feature
 > ends with executable evidence, not just claims.
 
+> **Scope note.** The frontend half of what used to be a two-stack verification document. The
+> backend's `cargo`/`sqlx::test` levels live in the sibling backend project's own
+> `docs/verification.md`. Each project's `verify_command` now covers only its own package, so a
+> change here no longer waits on the other stack's test suite.
+
 ## Verification Levels
 
 ### Level 1 — Unit Tests (mandatory)
 
-Run, from the repo root:
+Run, from this project's root:
 
 ```bash
-(cd frontend && npm run lint && npm run build && npm run test -- --watch=false --browsers=ChromeHeadless) && \
-(cd backend && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo build && cargo test)
+npm run lint && npm run build && npm run test -- --watch=false --browsers=ChromeHeadless
 ```
 
-This is the exact command `.harness.json`'s `verify_command` must be set to once both packages
-exist (task in `specs/scaffold_frontend_stack/tasks.md`) — `init.sh` runs it before allowing a
-session to close.
+This is what `.harness.json`'s `verify_command` is set to (plus the Node pin described below and a
+`CHROME_BIN` default) — `init.sh` runs it before allowing a session to close.
 
 ### Level 2 — Integration Test (if this project has a user-facing surface)
 
-- **Backend:** an `axum`-native integration test (`tower::ServiceExt::oneshot` against the real
-  router built by `build_app`, no mocking of the app itself) run against a throwaway `sqlx::test`
-  Postgres schema: `GET /api/harness/state` with a validly-signed Supabase JWT (crafted in the test
-  using the same test `SUPABASE_JWT_SECRET`) asserts 200 and the seeded feature/session data;
-  the same request with a missing, malformed, or expired JWT asserts 401 with no harness data in
-  the body.
-- **Frontend:** an Angular `TestBed` test that renders the root routed component with
-  `HttpTestingController` stubbing backend calls and a fake Supabase client stubbing
-  `signInWithPassword`/session state — first with no session (assert the login page renders, the
-  dashboard does not), then after a simulated successful sign-in (assert the dashboard now
-  renders).
+An Angular `TestBed` test that renders the root routed component with `HttpTestingController`
+stubbing backend calls and a fake Supabase client stubbing `signInWithPassword`/session state —
+first with no session (assert the login page renders, the dashboard does not), then after a
+simulated successful sign-in (assert the dashboard now renders).
 
 ### Level 3 — Manual Smoke Test (optional but recommended)
 
-1. `cd backend && cargo run` (reads `DATABASE_URL`, `SUPABASE_JWT_SECRET`, `FRONTEND_ORIGIN`,
-   `PORT` from `backend/.env`, defaults documented in `backend/.env.example`).
-2. `cd frontend && npm start` (`ng serve`; reads `SUPABASE_URL`/`SUPABASE_ANON_KEY` from
-   `frontend/src/environments/environment.ts`, generated from `frontend/.env` — see
-   `frontend/.env.example`).
-3. Open the frontend dev server URL in a browser — confirm the login screen renders and the
-   dashboard is not visible/reachable yet.
+This level needs the backend project running; it is the one place the two stacks are exercised
+together.
+
+1. Start the backend (in the sibling backend project: `cargo run`).
+2. `npm start` (`ng serve`; reads `SUPABASE_URL`/`SUPABASE_ANON_KEY` from
+   `src/environments/environment.ts`, generated from `.env` — see `.env.example`).
+3. Open the dev server URL in a browser — confirm the login screen renders and the dashboard is not
+   visible/reachable yet.
 4. Log in with a real Supabase user's email/password (created out-of-band in the Supabase project
-   dashboard, per `docs/architecture.md`'s "What NOT to do" — this feature does not implement
+   dashboard, per `docs/architecture.md`'s "What NOT to do" — this project does not implement
    signup) — confirm the dashboard now renders, and that its feature list matches
-   `scripts/harness.sh status` run against the same target project's mirrored Postgres schema.
+   `scripts/harness.sh status` run against the same target project.
 5. Reload the page — confirm the session persists (still logged in) without re-entering
    credentials, since `supabase-js` persists the session and refreshes the access token.
 
@@ -52,10 +49,9 @@ session to close.
 
 - "I added the feature, it should work." → missing executable proof.
 - A test that only checks "it didn't throw" → check the actual result.
-- Mocking the thing under test instead of exercising it for real (e.g. mocking the Axum router in
-  a backend test, or mocking the component under test in a frontend test — only the network
-  boundary/HTTP client/Supabase client may be stubbed, per `docs/conventions.md`'s "Tests"
-  section).
+- Mocking the thing under test instead of exercising it for real (e.g. mocking the component under
+  test — only the network boundary/HTTP client/Supabase client may be stubbed, per
+  `docs/conventions.md`'s "Tests" section).
 - Marking a feature `done` without `init.sh` passing.
 
 ## Final Check Before Closing
@@ -91,4 +87,3 @@ Consequences worth knowing:
   resolves paths directly and does not expand aliases.
 - Running `npm`/`ng` **outside** `init.sh` gets no pin. Activate it in the same shell call first:
   `export PATH="$HOME/.nvm/versions/node/v$(cat .nvmrc)/bin:$PATH"`, then confirm with `node -v`.
-
