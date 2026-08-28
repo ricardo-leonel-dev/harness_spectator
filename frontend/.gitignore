@@ -5,3 +5,4 @@ dist
 src/environments/environment.ts
 *.log
 .DS_Store
+harness.db
