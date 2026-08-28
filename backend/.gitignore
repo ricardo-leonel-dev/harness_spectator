@@ -2,13 +2,3 @@
 .env
 .DS_Store
 *.log
-harness.db
-.claude/
-.codex/
-scripts/
-.harness.json
-init.sh
-migrations/
-AGENTS.md
-CLAUDE.md
-CHECKPOINTS.md
