@@ -1,0 +1,7 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #0e0e10;
+  color: #e6e6e6;
+}
