@@ -1,4 +1,5 @@
 import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
+import { LucideAngularModule, AlertTriangle } from 'lucide-angular';
 
 export interface BlockedFeatureVm {
   name: string;
@@ -7,64 +8,31 @@ export interface BlockedFeatureVm {
 
 @Component({
   selector: 'app-blocked-features-card',
-  standalone: true,
+  imports: [LucideAngularModule],
+  providers: [LucideAngularModule.pick({ AlertTriangle }).providers ?? []],
   template: `
-    <section class="card">
-      <h2>Blocked features</h2>
+    <section class="rounded-sm border border-line bg-panel p-4">
+      <h2 class="flex items-center gap-2 font-sans text-label font-medium uppercase text-muted">
+        @if (features.length > 0) {
+          <lucide-icon name="alert-triangle" class="h-3.5 w-3.5 text-status-blocked" />
+        }
+        Blocked features
+      </h2>
       @if (features.length > 0) {
-        <ul>
+        <ul class="mt-3 flex list-none flex-col gap-3 p-0">
           @for (f of features; track f.name) {
-            <li>
-              <strong>{{ f.name }}</strong>
-              <span class="note">{{ f.note }}</span>
+            <li class="border-l-2 border-status-blocked pl-3" data-blocked-item>
+              <p class="m-0 font-mono text-sm text-text">{{ f.name }}</p>
+              <p class="m-0 mt-1 font-mono text-xs leading-relaxed text-muted">{{ f.note }}</p>
             </li>
           }
         </ul>
       } @else {
-        <p class="empty">No blocked features.</p>
+        <p class="mt-3 text-sm text-muted">Nothing blocked.</p>
       }
     </section>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styles: [
-    `
-      .card {
-        background: #18181b;
-        border: 1px solid #2d2d34;
-        border-radius: 6px;
-        padding: 12px;
-      }
-      h2 {
-        margin: 0 0 8px;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #a1a1aa;
-      }
-      ul {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      li {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        font-size: 12px;
-      }
-      .note {
-        color: #71717a;
-      }
-      .empty {
-        font-size: 12px;
-        color: #71717a;
-        font-style: italic;
-      }
-    `,
-  ],
 })
 export class BlockedFeaturesCardComponent {
   @Input({ required: true }) features: BlockedFeatureVm[] = [];

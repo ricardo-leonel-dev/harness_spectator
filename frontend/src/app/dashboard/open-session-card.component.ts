@@ -1,4 +1,5 @@
 import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
+import { LucideAngularModule, Clock } from 'lucide-angular';
 
 export interface OpenSessionVm {
   agent: string;
@@ -9,62 +10,37 @@ export interface OpenSessionVm {
 
 @Component({
   selector: 'app-open-session-card',
-  standalone: true,
+  imports: [LucideAngularModule],
+  providers: [LucideAngularModule.pick({ Clock }).providers ?? []],
   template: `
-    <section class="card">
-      <h2>Open session</h2>
+    <section class="rounded-sm border border-line bg-panel p-4">
+      <h2 class="font-sans text-label font-medium uppercase text-muted">Open session</h2>
       @if (session) {
-        <dl>
-          <dt>Agent</dt>
-          <dd>{{ session.agent }}</dd>
-          <dt>Feature</dt>
-          <dd>{{ session.feature }}</dd>
-          <dt>Started</dt>
-          <dd>{{ session.startedAt }}</dd>
-          <dt>Next step</dt>
-          <dd>{{ session.nextStep ?? '—' }}</dd>
-        </dl>
+        <div class="mt-3 rounded-sm border border-line bg-ink p-3 font-mono text-xs leading-6">
+          <dl class="grid grid-cols-[5rem_1fr] gap-x-3">
+            <dt class="text-muted">agent</dt>
+            <dd class="m-0 break-words text-text">{{ session.agent }}</dd>
+            <dt class="text-muted">feature</dt>
+            <dd class="m-0 break-words text-text">{{ session.feature }}</dd>
+            <dt class="text-muted">started</dt>
+            <dd class="m-0 flex items-center gap-2 break-words text-text">
+              <lucide-icon name="clock" class="h-3 w-3 shrink-0 text-muted" />
+              <span>{{ session.startedAt }}</span>
+            </dd>
+            <dt class="text-muted">next</dt>
+            <dd class="m-0 break-words text-text">{{ session.nextStep ?? '—' }}</dd>
+          </dl>
+          <span
+            class="mt-1 inline-block h-3 w-1.5 animate-caret bg-signal align-middle motion-reduce:animate-none"
+            data-caret
+          ></span>
+        </div>
       } @else {
-        <p class="empty">No open session.</p>
+        <p class="mt-3 text-sm text-muted">No agent session open.</p>
       }
     </section>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styles: [
-    `
-      .card {
-        background: #18181b;
-        border: 1px solid #2d2d34;
-        border-radius: 6px;
-        padding: 12px;
-      }
-      h2 {
-        margin: 0 0 8px;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #a1a1aa;
-      }
-      dl {
-        display: grid;
-        grid-template-columns: max-content 1fr;
-        gap: 4px 12px;
-        margin: 0;
-        font-size: 12px;
-      }
-      dt {
-        color: #71717a;
-      }
-      dd {
-        margin: 0;
-      }
-      .empty {
-        font-size: 12px;
-        color: #71717a;
-        font-style: italic;
-      }
-    `,
-  ],
 })
 export class OpenSessionCardComponent {
   @Input() session: OpenSessionVm | null = null;

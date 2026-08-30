@@ -1,93 +1,105 @@
 import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
+import { LucideAngularModule, Key, Lock, Mail } from 'lucide-angular';
 
 import { AuthService } from './auth.service';
 
 @Component({
   selector: 'app-login-page',
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, LucideAngularModule],
+  providers: [LucideAngularModule.pick({ Key, Lock, Mail }).providers ?? []],
   template: `
-    <div class="login-shell">
-      <form class="login-card" [formGroup]="form" (ngSubmit)="onSubmit()">
-        <h1>Sign in</h1>
-        <label>
-          Email
-          <input type="email" formControlName="email" autocomplete="email" />
-        </label>
-        <label>
-          Password
-          <input type="password" formControlName="password" autocomplete="current-password" />
-        </label>
+    <div class="grid min-h-screen place-items-center bg-ink px-6 py-12">
+      <form
+        class="w-full max-w-sm rounded-sm border border-line bg-panel p-8"
+        [formGroup]="form"
+        (ngSubmit)="onSubmit()"
+      >
+        <div class="flex items-center gap-3">
+          <span
+            class="relative grid h-9 w-9 place-items-center rounded-sm border border-line bg-panel-raised"
+          >
+            <lucide-icon name="lock" class="h-4 w-4 text-signal" />
+            <span class="absolute -right-1 -top-1 flex h-2 w-2" data-beacon>
+              <span
+                class="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-70 motion-reduce:hidden"
+              ></span>
+              <span class="relative inline-flex h-2 w-2 rounded-full bg-signal"></span>
+            </span>
+          </span>
+          <h1 class="font-mono text-sm tracking-tight text-text">
+            harness<span class="px-1 text-signal">.</span>spectator
+          </h1>
+        </div>
+
+        <p class="mt-6 text-sm leading-relaxed text-muted">
+          Sign in to watch the agents work this project's feature queue.
+        </p>
+
+        <div class="mt-6 flex flex-col gap-4">
+          <div class="flex flex-col gap-2">
+            <label for="login-email" class="font-mono text-label uppercase text-muted">
+              Email
+            </label>
+            <div class="relative">
+              <lucide-icon
+                name="mail"
+                class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+              />
+              <input
+                id="login-email"
+                type="email"
+                formControlName="email"
+                autocomplete="email"
+                class="w-full rounded-sm border border-line bg-ink py-2 pl-9 pr-3 font-mono text-sm text-text caret-signal outline-none placeholder:text-muted/60 focus:border-signal focus:ring-1 focus:ring-signal"
+              />
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label for="login-password" class="font-mono text-label uppercase text-muted">
+              Password
+            </label>
+            <div class="relative">
+              <lucide-icon
+                name="key"
+                class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+              />
+              <input
+                id="login-password"
+                type="password"
+                formControlName="password"
+                autocomplete="current-password"
+                class="w-full rounded-sm border border-line bg-ink py-2 pl-9 pr-3 font-mono text-sm text-text caret-signal outline-none placeholder:text-muted/60 focus:border-signal focus:ring-1 focus:ring-signal"
+              />
+            </div>
+          </div>
+        </div>
+
         @if (errorMessage()) {
-          <div class="error-banner" role="alert">{{ errorMessage() }}</div>
+          <div
+            class="mt-4 flex gap-2 rounded-sm border-l-2 border-status-blocked bg-status-blocked/10 px-3 py-2 font-mono text-xs leading-relaxed text-text"
+            role="alert"
+          >
+            <span class="text-status-blocked">[ERR]</span>
+            <span>{{ errorMessage() }}</span>
+          </div>
         }
-        <button type="submit" [disabled]="form.invalid || submitting()">
-          {{ submitting() ? 'Signing in...' : 'Sign in' }}
+
+        <button
+          type="submit"
+          [disabled]="form.invalid || submitting()"
+          class="mt-6 w-full rounded-sm bg-signal py-2 text-sm font-medium text-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {{ submitting() ? 'Signing in…' : 'Sign in' }}
         </button>
-        <footer>Secured by Supabase Auth</footer>
+
+        <p class="mt-6 text-center text-xs text-muted">Secured by Supabase Auth</p>
       </form>
     </div>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styles: [
-    `
-      .login-shell {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 100vh;
-      }
-      .login-card {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        width: 320px;
-        padding: 24px;
-        background: #18181b;
-        border: 1px solid #2d2d34;
-        border-radius: 6px;
-      }
-      label {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        font-size: 12px;
-        color: #a1a1aa;
-      }
-      input {
-        padding: 8px;
-        background: #0e0e10;
-        color: #e6e6e6;
-        border: 1px solid #2d2d34;
-        border-radius: 4px;
-      }
-      .error-banner {
-        padding: 8px;
-        background: #5a1d1d;
-        color: #ffd6d6;
-        border-radius: 4px;
-        font-size: 12px;
-      }
-      button {
-        padding: 8px 12px;
-        background: #2563eb;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      button:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      footer {
-        font-size: 11px;
-        color: #71717a;
-        text-align: center;
-      }
-    `,
-  ],
 })
 export class LoginPageComponent {
   private readonly fb = inject(FormBuilder);
