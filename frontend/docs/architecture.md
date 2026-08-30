@@ -62,19 +62,51 @@ Supabase is already the target data platform.
    Don't let implementers introduce additional top-level layers without updating this file first.
 2. **Dependencies.** Approved allowlist, not "anything goes":
    - Runtime: `@angular/core`, `@angular/common`, `@angular/router`, `@angular/forms`,
-     `@angular/common/http`, `@supabase/supabase-js`, `rxjs`.
+     `@angular/common/http`, `@angular/cdk`, `@supabase/supabase-js`, `rxjs`, `lucide-angular`,
+     `@fontsource/ibm-plex-sans`, `@fontsource/ibm-plex-mono`.
    - Dev: `@angular/cli`, `@angular-devkit/build-angular`, `typescript`, `eslint` +
      `typescript-eslint` + `angular-eslint`, `prettier`, `karma`, `karma-chrome-launcher`,
-     `jasmine-core`, `@types/jasmine`.
-   - No UI component library, no CSS framework, no state-management library beyond Angular signals
-     + `AuthService`/`HarnessApiService`. Adding a dependency outside this list requires updating
-     this file first, in the same spirit as the layers rule above.
+     `jasmine-core`, `@types/jasmine`, `tailwindcss`, `postcss`, `autoprefixer`.
+   - No state-management library beyond Angular signals + `AuthService`/`HarnessApiService`. No
+     prebuilt UI component library — `@angular/material` and equivalents are rejected; `@angular/cdk`
+     is the one exception, used only for its unstyled behavior primitives (overlay positioning,
+     focus-trap, a11y, drag-drop), never for a themed/pre-styled component. Every visible component
+     is hand-built and styled with Tailwind utility classes (see `docs/conventions.md`).
+   - **Offline-first.** No dependency, asset, `<link>`, or `<script>` may reach an external CDN at
+     runtime — no Google Fonts, no cdnjs/unpkg/jsdelivr, no icon-font service. This app must render
+     correctly with zero internet access (aside from its own Supabase Auth / backend API calls,
+     which are the point). Fonts and icons ship inside the app bundle instead: `@fontsource/ibm-plex-sans`
+     + `@fontsource/ibm-plex-mono` for self-hosted `.woff2` files, `lucide-angular` for inline SVG
+     icons — see Principle 5.
+   - Adding a dependency outside this list requires updating this file first, in the same spirit as
+     the layers rule above.
 3. **Error handling.** Every `HttpClient` call's error path is surfaced in the UI (a visible inline
    message) — no empty `catch`/unhandled `error` callback, no error logged to the console and
    otherwise ignored.
 4. **State/mutability.** Component state via Angular signals; the only cross-cutting mutable state
    is `AuthService`'s session signal (backed by the Supabase client's own session persistence in
    `localStorage`, which `@supabase/supabase-js` manages). No other global mutable singletons.
+5. **Visual design.** This app renders with no prebuilt component library and no external network
+   dependency for its own look:
+   - **Styling:** Tailwind CSS utility classes are the only styling mechanism (see
+     `docs/conventions.md`) — no separate CSS framework, no themed component library beyond
+     `@angular/cdk`'s unstyled behavior primitives.
+   - **Icons:** `lucide-angular`, rendered as inline SVG. Never an icon font, never an
+     `<img src="https://...">` to an icon CDN.
+   - **Typography:** a deliberate pairing of self-hosted Plex-family faces — `@fontsource/ibm-plex-sans`
+     for UI chrome, `@fontsource/ibm-plex-mono` for anything that's literally a harness data value
+     (feature/agent identifiers, timestamps, status labels) — chosen because the subject is a console
+     for observing coding agents, not decoration. Their `.woff2` files ship inside the app bundle and
+     are never fetched from Google Fonts or any other CDN at runtime.
+   - Since there's no component library's defaults to fall back on, every visual decision here is
+     either deliberate or it's generic. The `frontend-design` skill is **mandatory, not advisory**:
+     before any markup or styles are written or reshaped in `src/app/auth/` or `src/app/dashboard/`
+     — a new component, a layout change, a visual tweak, or a restyle of an existing one — invoke
+     Claude Code's `frontend-design` skill for aesthetic direction, typography, and layout choices.
+     The skill is invoked at the **start** of any work that touches these directories, not
+     retroactively after the design has already settled. The reviewer agent treats a default or
+     generic layout as a rejected review (see "What NOT to do" below), not a style nitpick —
+     invoking the skill is what produces a design that survives review.
 
 ## Data Flow
 
@@ -109,4 +141,15 @@ written into the gitignored `src/environments/environment.ts` by `scripts/write-
 - Do not commit `SUPABASE_ANON_KEY` or any other secret — they are supplied via untracked `.env`
   files (see `.env.example`), consistent with `harness.db` already being gitignored for similar
   reasons.
-- Do not add a UI component library or CSS framework (see the dependency allowlist above).
+- Do not add a prebuilt UI component library (`@angular/material` and equivalents) or a second CSS
+  framework alongside Tailwind (see the dependency allowlist above). `@angular/cdk` is the one
+  exception, for unstyled behavior primitives only.
+- Do not reference any external CDN — no Google Fonts `<link>`, no icon-font service, no
+  `<script src="https://...">` of any kind. Fonts (`@fontsource/ibm-plex-sans` +
+  `@fontsource/ibm-plex-mono`) and icons (`lucide-angular`) must ship inside the app bundle; this app
+  has to work with zero internet access at runtime, aside from its own Supabase Auth / backend API
+  calls.
+- Do not write or reshape UI markup/styles in `src/app/auth/` or `src/app/dashboard/` without first
+  invoking the `frontend-design` skill (Principle 5), and do not invoke it after the design has
+  already settled — invocation happens at the start, before any markup or CSS is written. A
+  default/generic layout is a rejected review, not a style nitpick.
