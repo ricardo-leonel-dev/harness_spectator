@@ -11,6 +11,12 @@
     "format": "prettier --write .",
     "test": "ng test"
   },
+  "overrides": {
+    "lucide-angular": {
+      "@angular/core": "$@angular/core",
+      "@angular/common": "$@angular/common"
+    }
+  },
   "dependencies": {
     "@angular/common": "^22.1.4",
     "@angular/core": "^22.1.4",
@@ -18,7 +24,10 @@
     "@angular/platform-browser": "^22.1.4",
     "@angular/platform-browser-dynamic": "^22.1.4",
     "@angular/router": "^22.1.4",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@supabase/supabase-js": "^2.45.0",
+    "lucide-angular": "^1.0.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
     "zone.js": "~0.15.1"
@@ -30,6 +39,7 @@
     "@angular/compiler-cli": "^22.1.4",
     "@types/jasmine": "~5.1.0",
     "angular-eslint": "^22.1.0",
+    "autoprefixer": "^10.5.4",
     "eslint": "^10.9.1",
     "istanbul-lib-instrument": "^6.0.3",
     "jasmine-core": "~5.2.0",
@@ -38,7 +48,9 @@
     "karma-coverage": "~2.2.0",
     "karma-jasmine": "~5.1.0",
     "karma-jasmine-html-reporter": "~2.1.0",
+    "postcss": "^8.5.26",
     "prettier": "^3.3.0",
+    "tailwindcss": "^3.4.19",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.0.0"
   }

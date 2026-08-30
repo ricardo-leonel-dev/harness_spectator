@@ -24,9 +24,7 @@ interface FakeSupabaseBuilder {
     onAuthStateChange: (
       _cb: (event: string, session: Session | null) => void,
     ) => FakeSupabaseAuthStateChangeResult;
-    signInWithPassword: (
-      creds: { email: string; password: string },
-    ) => Promise<{
+    signInWithPassword: (creds: { email: string; password: string }) => Promise<{
       data: { user: unknown; session: Session | null };
       error: { message: string } | null;
     }>;
@@ -129,12 +127,77 @@ describe('LoginPageComponent', () => {
     const fixture = TestBed.createComponent(LoginPageComponent);
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('form.login-card')).toBeTruthy();
-    expect(fixture.nativeElement.querySelector('button[type="submit"]')).toBeTruthy();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('form')).toBeTruthy();
+    expect(host.querySelector('button[type="submit"]')).toBeTruthy();
+    expect(host.querySelector('input#login-email')).toBeTruthy();
+    expect(host.querySelector('input#login-password')).toBeTruthy();
 
     const router = TestBed.inject(Router);
     await router.navigate(['/']);
     expect(router.url.startsWith('/login')).toBe(true);
+  });
+
+  it('renders the offline design system chrome: one beacon, the wordmark, mono field labels and icons', async () => {
+    const auth = TestBed.inject(AuthService);
+    auth.init();
+    await flushMicrotasks();
+
+    const fixture = TestBed.createComponent(LoginPageComponent);
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelectorAll('[data-beacon]').length).toBe(1);
+    expect((host.textContent ?? '').replace(/\s+/g, '')).toContain('harness.spectator');
+
+    const labels = Array.from(host.querySelectorAll('label'));
+    expect(labels.length).toBe(2);
+    for (const label of labels) {
+      expect(label.className).toContain('font-mono');
+      expect(label.className).toContain('uppercase');
+      expect(label.getAttribute('for')).toBeTruthy();
+    }
+
+    for (const input of Array.from(host.querySelectorAll('input'))) {
+      expect(input.className).toContain('font-mono');
+    }
+
+    const submit = host.querySelector('button[type="submit"]') as HTMLButtonElement;
+    expect(submit.className).toContain('bg-signal');
+    expect(submit.className).toContain('text-ink');
+
+    const icons = Array.from(host.querySelectorAll('svg')).map((svg) => svg.getAttribute('class'));
+    expect(icons.some((c) => c?.includes('lucide-lock'))).toBe(true);
+    expect(icons.some((c) => c?.includes('lucide-mail'))).toBe(true);
+    expect(icons.some((c) => c?.includes('lucide-key'))).toBe(true);
+  });
+
+  it('blocks submission until the credentials are valid', async () => {
+    const auth = TestBed.inject(AuthService);
+    auth.init();
+    await flushMicrotasks();
+
+    const fixture = TestBed.createComponent(LoginPageComponent);
+    fixture.detectChanges();
+    const submit = fixture.nativeElement.querySelector(
+      'button[type="submit"]',
+    ) as HTMLButtonElement;
+
+    expect(fixture.componentInstance.form.invalid).toBe(true);
+    expect(submit.disabled).toBe(true);
+
+    fixture.componentInstance.form.setValue({ email: 'not-an-email', password: 'pw' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.form.invalid).toBe(true);
+    expect(submit.disabled).toBe(true);
+
+    await fixture.componentInstance.onSubmit();
+    expect(fakeHolder.signInCalls).toEqual([]);
+
+    fixture.componentInstance.form.setValue({ email: 'a@b.c', password: 'pw' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.form.valid).toBe(true);
+    expect(submit.disabled).toBe(false);
   });
 
   it('renders the dashboard after a successful login', async () => {
@@ -153,7 +216,7 @@ describe('LoginPageComponent', () => {
     expect(fakeHolder.signInCalls).toEqual([{ email: 'a@b.c', password: 'pw' }]);
   });
 
-  it('displays an inline error and does not navigate on a failed login', async () => {
+  it('displays an inline [ERR] banner and does not navigate on a failed login', async () => {
     fakeHolder.failNextSignIn('Invalid login credentials');
 
     const auth = TestBed.inject(AuthService);
@@ -171,9 +234,11 @@ describe('LoginPageComponent', () => {
     await fixture.componentInstance.onSubmit();
 
     fixture.detectChanges();
-    const errorBanner = fixture.nativeElement.querySelector('.error-banner') as HTMLElement | null;
+    const errorBanner = fixture.nativeElement.querySelector('[role="alert"]') as HTMLElement | null;
     expect(errorBanner).toBeTruthy();
+    expect(errorBanner?.textContent ?? '').toContain('[ERR]');
     expect(errorBanner?.textContent ?? '').toContain('Invalid login credentials');
+    expect(errorBanner?.className).toContain('border-status-blocked');
 
     // A failed login must not navigate to the dashboard.
     expect(router.url).toBe('/login');
