@@ -19,6 +19,36 @@
 - **Line length / formatting rules:** Prettier defaults except `printWidth: 100`;
   `singleQuote: true`; `semi: true`; `trailingComma: "all"`.
 
+## Visual Design
+
+**Always invoke the `frontend-design` skill (Claude Code) before writing or reshaping any markup or
+styles under `src/app/auth/` or `src/app/dashboard/`.** This is non-negotiable, not advisory: per
+`docs/architecture.md`'s Principle 5 and its "What NOT to do" list, a default or generic layout is
+a rejected review, not a style nitpick. The skill applies every time these directories are touched
+— new components, restyling existing ones, and material visual tweaks alike — not only at first
+creation, and it is invoked **before** the design has settled, not retroactively to justify one.
+
+- **Tailwind:** utility classes directly in templates are the default. Reach for a component-scoped
+  `@apply` rule (in that component's own `.css` file) only when the same utility cluster repeats
+  three or more times within one component — never a global `@apply`-based class sheet, and never
+  hand-written CSS that duplicates what a utility class already does. `tailwind.config.js` lives at
+  the project root; any design token (color, spacing, font size) used more than once belongs in its
+  `theme.extend`, not copy-pasted as a raw utility value (e.g. `text-[#1a2b3c]`).
+- **CDK:** import only the specific CDK module a component needs (`OverlayModule`, `A11yModule`,
+  etc.) — never a blanket import. `@angular/cdk` provides behavior only; it must never be the source
+  of a component's visible styling (no un-overridden CDK theme classes in markup).
+- **Icons:** `lucide-angular`, registered per-component via `LucideAngularModule.pick({ IconName })`
+  — never the whole icon set — and rendered with `<lucide-icon name="icon-name" />`. Size/color via
+  Tailwind classes (`class="h-4 w-4 text-current"`), not the library's own styling props.
+- **Fonts:** a deliberate two-face pairing, both Plex-family siblings — `@fontsource/ibm-plex-sans`
+  for UI chrome (headings, labels, buttons, prose) via Tailwind's `font-sans`, and
+  `@fontsource/ibm-plex-mono` for anything that is literally a harness data value — feature names,
+  agent identities, timestamps, session ids, status labels — via Tailwind's `font-mono`. Both CSS
+  imports live once, in `src/styles.css`; never a per-component `@font-face` and never a `<link>` in
+  `index.html`. A value read straight from `HarnessApiService`'s response renders in `font-mono`; UI
+  copy the frontend itself wrote (labels, button text, error prose) renders in `font-sans` — that
+  split is the rule, not a hardcoded `font-family` per element.
+
 ## Names
 
 | Construct | Convention | Example |
