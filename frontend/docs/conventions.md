@@ -47,7 +47,12 @@ creation, and it is invoked **before** the design has settled, not retroactively
   imports live once, in `src/styles.css`; never a per-component `@font-face` and never a `<link>` in
   `index.html`. A value read straight from `HarnessApiService`'s response renders in `font-mono`; UI
   copy the frontend itself wrote (labels, button text, error prose) renders in `font-sans` — that
-  split is the rule, not a hardcoded `font-family` per element.
+  split is the rule, not a hardcoded `font-family` per element. One exception: instrument labels —
+  the short uppercase captions styled with the `text-label` token (form field labels, section and
+  card titles, table column headers) — render in `font-mono` even though the frontend wrote them,
+  because they read as console readouts, not prose. This matches the design reference. And the
+  reverse: free-text values from the API — a feature's `title`, a blocked feature's `note` — are
+  prose, so they render in `font-sans`; identifiers, timestamps and status labels stay `font-mono`.
 
 ## Names
 
