@@ -7,8 +7,8 @@
     "prebuild": "node scripts/write-env.mjs",
     "start": "ng serve",
     "build": "ng build",
-    "lint": "ng lint",
-    "format": "prettier --write .",
+    "lint": "ng lint && prettier --check src",
+    "format": "prettier --write src",
     "test": "ng test"
   },
   "overrides": {
@@ -37,6 +37,7 @@
     "@angular/cli": "^22.1.6",
     "@angular/compiler": "^22.1.4",
     "@angular/compiler-cli": "^22.1.4",
+    "@eslint/js": "^10.0.1",
     "@types/jasmine": "~5.1.0",
     "angular-eslint": "^22.1.0",
     "autoprefixer": "^10.5.4",

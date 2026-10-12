@@ -19,7 +19,8 @@ npm run lint && npm run build && npm run test -- --watch=false --browsers=Chrome
 ```
 
 This is what `.harness.json`'s `verify_command` is set to (plus the Node pin described below and a
-`CHROME_BIN` default) — `init.sh` runs it before allowing a session to close.
+`CHROME_BIN` default) — `init.sh` runs it before allowing a session to close. `npm run lint` is `ng lint && prettier --check
+src`, so unformatted source fails the gate — run `npm run format` (scoped to `src`) to fix it.
 
 ### Level 2 — Integration Test (if this project has a user-facing surface)
 
