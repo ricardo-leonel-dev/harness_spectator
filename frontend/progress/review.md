@@ -1,56 +1,63 @@
-# Review — feature 2 (`upgrade_angular_latest`)
+# Review — feature 4 (design_fidelity_pass)
 
 **Verdict:** APPROVED
 
+Session 12, `sdd=0`. The contract is the 14 acceptance criteria in `state/features/004-design_fidelity_pass.md`. The visual source of truth is `progress/design_reference/{login,dashboard}.dc.html`.
+
 ## Checkpoints
 
-- C1: [x] — `.harness.json`, `harness.db` exist; `docs/{architecture,conventions,verification,specs}.md` and `CHECKPOINTS.md` are filled in (not template placeholders); `./init.sh` exits 0 with `[OK] Environment ready`.
-- C2: [x] — At most one `in_progress` feature (only feature 2; feature 1 is `done`, feature 3 is `spec_drafting`); the open session reflects real, current work — the implementer's log shows T1–T13 actually executed against this feature, not a stale leftover; verify is genuinely green (not prose).
-- C3: [x] — `frontend/src/app/` layers (`auth/`, `dashboard/`, `core/`) untouched by feature scope; new deps (`typescript-eslint@8`, `istanbul-lib-instrument`) are within the architecture's allowlist (the former is explicitly listed, the latter is a peer dep of the already-present `karma-coverage`); no stray `print`/`console.log`/orphaned TODOs in the changed files.
-- C4: [x] — Verify is real, not asserted: I re-ran it. Frontend slice (lint, build, 5/5 Karma tests SUCCESS) and backend slice (fmt, clippy, build, 4 unit tests in `backend/src/auth/jwt.rs` + 5 integration tests in `backend/tests/harness.rs`, all pass when `DATABASE_URL` is exported per `.harness.json`'s `verify_command`). `./init.sh` end-to-end exits 0; the only stderr line is the expected `[WARN]` from `scripts/sync_postgres.sh` when no Supabase mirror is configured (unrelated to this feature).
-- C5: [x] — No stray untracked/temp files. The implementer correctly did not run `scripts/harness.sh log-out` (per leader's instruction and `AGENTS.md` §0); session remains open awaiting this approval. **Hygiene nit:** the session log's `Next Step` is stale — still reads "Await user to either install Node v22.22.3+ (e.g. nvm install 22.22.3)..." even though T9–T13 are `[x]` and the work is complete. This will be refreshed when the implementer runs `log-out` after this approval. Flagging here so it isn't forgotten.
-- C6: [x] — `specs/upgrade_angular_latest/{requirements.md,design.md,tasks.md}` all exist; requirements are in strict EARS with stable `R<n>` ids; all 13 tasks in `tasks.md` are `[x]`; every `R<n>` maps to evidence I verified directly (see "R<n> trace" below).
+- C1: [x] — `./init.sh` exited 0 (`[OK] Environment ready.`).
+- C2: [x] — one feature is `in_progress` (4). Session 12 is the real, current work.
+- C3: [x] — no hex values and no CDN references in `src/`. Icons come from lucide `pick()` only. Fonts come from `@fontsource` only (`latin-600` mono added to `src/styles.css`). No `console.log` and no TODOs were added. The `frontend-design` skill invocation is recorded in `progress/impl_design_fidelity_pass.md` § "frontend-design skill".
+- C4: [x] — Karma 27/27 SUCCESS, run by me through `./init.sh`. Each changed component has a spec that renders real DOM and checks computed style or geometry (see the table below).
+- C5: [x] (pending log-out) — no stray files from this feature. `.DS_Store` and `progress/impl_offline_design_system.md` predate it. The session stays open until the implementer runs `log-out` after this approval.
+- C6: N/A (sdd=0)
 
-## Verification performed (not just prose)
+## Criterion verification (spec read and run by me, markup compared with the reference)
 
-I activated Node 22.23.2 in every Bash call (per the leader's note about PATH shadowing from `~/.local/share/nvm`) and re-ran everything:
+| # | Verdict | Evidence |
+|---|---|---|
+| 1 | [x] | `login-page.component.ts`: `data-login-header` is `flex-col items-center`. It holds the `login-mark` beacon, an h1 "Sign in" in `font-sans font-semibold` at 17px, and a mono uppercase "harness · spectator". There is no Lock icon and no prose. The L spec checks computed weight 600, computed uppercase and `svg.lucide-lock` = null. |
+| 2 | [x] | `bg-ink` shell, plus a `bg-dot-grid bg-dots opacity-60` layer (same as the reference: `radial-gradient(#131820 1px…)`, 26px, opacity 0.6). The card has `max-w-[368px] rounded-md shadow-card` (`0 30px 70px rgba(0,0,0,.55)`), matching the reference. The spec checks the computed radius, shadow and max-width. |
+| 3 | [x] | Placeholders match exactly. The icon sits in a wrapper at `left-2.5` and the input has `pl-8`. The spec asserts with `getBoundingClientRect` that the offset is about 10px, the width about 14px, and the icon's right edge is before the text start. My screenshot shows no overlap. |
+| 4 | [x] | While submitting, `[data-spinner]` (`animate-spin-fast motion-reduce:animate-none`) shows next to "Signing in…" and the button is disabled. The error banner has `border border-status-blocked/35` and a mono `[ERR]`. The spec checks a computed 1px border on all four sides and no `border-l-2`. |
+| 5 | [x] | Footer: mono, uppercase, `tracking-[0.08em]`, `text-[9.5px]`. The spec checks computed uppercase, letter-spacing > 0 and font-size < 10px. |
+| 6 | [x] | Features h1 and both card h2s are `font-mono text-label uppercase`. The blocked card title reads "Blocked". The spec checks the computed font-family is IBM Plex Mono. `docs/conventions.md` already has the instrument-label exception. |
+| 7 | [x] | `features-table.component.ts`: list rows, no table/thead/SDD. `padStart(2,'0')`, mono name, `font-sans text-dim truncate` title, track as the last child, `hover:bg-row-hover`, empty state kept. The spec forces an overflowing title (`scrollWidth > clientWidth`). |
+| 8 | [x] | The `STATUS_TRACK` map in `lifecycle-track.component.ts` matches the reference script block for all 5 statuses (connector, filled/hollow, node colour, pulse only on in_progress). The T spec iterates every status and checks the computed transparent background on hollow nodes. |
+| 9 | [x] | Labels are 'pending', 'spec ready', 'in progress', 'blocked', 'done' with per-status colours. Unknown statuses fall back to `text-muted`, a hollow `border-faint` node and underscores turned into spaces (T and D specs). |
+| 10 | [x] | Lines are `$`-prefixed (`text-faint`) for agent/feature/started/next, and the caret is the last child of the `next` line, right after the value. The terminal block has no clock. The spec checks the caret's parent and its previous sibling. |
+| 11 | [x] | Header is `bg-panel` with the wordmark beacon and "Harness" in mono uppercase (computed), `·` in `text-line-strong`, mono slug, `rounded-full` initial, and a `lucide-log-out` icon. The agent indicator works as before (the beacon only shows when `activeAgents() > 0`, otherwise "idle"). This matches the reference `beaconColor` logic. |
+| 12 | [x] | The `loggingOut` signal drives a `fixed inset-0 bg-ink/[0.88]` overlay with a `border-signal` spinner and mono "redirecting to sign in…". The button is disabled and reads "Logging out…". The spec holds `signOut` open: computed background `rgba(10, 13, 18, 0.88)`, a second click does not call `signOut` again, and after release the route is `/login`. |
+| 13 | [x] | `grid-cols-1 lg:grid-cols-[1.7fr_1fr] gap-4 p-4 lg:p-5`, aside `gap-3.5`. This matches the reference (`gap:16px; padding:20px`, aside `gap:14px`). |
+| 14 | [x] | `grep 'data-beacon[^-]' src` (excluding specs) finds exactly 4: login-mark, wordmark, agent (conditional), lifecycle (conditional). Every `animate-*` line in `src` also has `motion-reduce:animate-none`, and the row `transition-colors` has `motion-reduce:transition-none`. Beacon pings also have `motion-reduce:hidden`. The D spec checks that the set of beacons across login and live dashboard is exactly 4, and that idle shows only `wordmark`. |
 
-- `./init.sh` end-to-end → exit 0, ends with `[OK] Environment ready. You can start working.` Snapshot regenerated; only stderr noise is the unrelated `bootstrap_project sync failed` `[WARN]` from the Postgres mirror step.
-- `npm --prefix frontend run lint` → `All files pass linting.`
-- `npm --prefix frontend run build` → bundle emitted (`505.25 kB` initial), 2.07s.
-- `npm --prefix frontend run test -- --watch=false --browsers=ChromeHeadless` → `TOTAL: 5 SUCCESS` (3 in `login-page.component.spec.ts`, 2 in `dashboard-page.component.spec.ts`).
-- `cd backend && cargo fmt --check` → clean.
-- `cd backend && cargo clippy --all-targets -- -D warnings` → clean (the `sqlx-postgres v0.7.4` future-incompat note is an upstream package warning, not project code; out of scope).
-- `cd backend && cargo test` with `DATABASE_URL` exported per `.harness.json` → 4 unit tests + 5 integration tests, all pass (`state_with_valid_token_returns_200_and_seeded_data`, `state_without_auth_header_returns_401_and_no_state`, `state_with_wrong_signature_returns_401`, `state_with_expired_token_returns_401`, `reader_performs_only_select_queries`).
-- File-level spot checks confirmed in `frontend/package.json`: `@angular/{common,core,forms,platform-browser,platform-browser-dynamic,router,compiler,compiler-cli}` all `^22.1.4`; `@angular/{cli,devkit/build-angular}` `^22.1.6`; `angular-eslint ^22.1.0`; `typescript ~6.0.3` (satisfies R11's `>=6.0.0`); `eslint ^10.9.1`; `typescript-eslint ^8.0.0`; `zone.js ~0.15.1`; no legacy `@typescript-eslint/eslint-plugin@^7` / `@typescript-eslint/parser@^7` anywhere in `package.json`.
-- `frontend/.eslintrc.json` confirmed deleted; `frontend/eslint.config.js` confirmed created and matches design.md's specified rule set (directive-selector/component-selector with prefix `app`, `no-unused-vars` with `argsIgnorePattern: '^_'`, `*.spec.ts` `no-explicit-any: off`).
-- `frontend/src/app/app.config.ts` line 11 confirmed: `provideZoneChangeDetection({ eventCoalescing: true })` is still explicit (R10 guard).
-- `npm ls typescript-eslint @typescript-eslint/eslint-plugin @typescript-eslint/parser` from `frontend/`: only `typescript-eslint@8.68.0` (umbrella) with nested `@typescript-eslint/{eslint-plugin,parser}@8.68.0`; no v7 packages. `npm install --dry-run` returns no peer warnings. `npm install` returns "up to date" with no warnings.
-- All 7 components flipped to `ChangeDetectionStrategy.OnPush`: `app.component.ts`, `auth/login-page.component.ts`, `dashboard/blocked-features-card.component.ts`, `dashboard/dashboard-page.component.ts`, `dashboard/features-table.component.ts`, `dashboard/open-session-card.component.ts`, `dashboard/status-badge.component.ts`. Confirmed each one is either signal-driven or pure `@Input()` presentation (see "Scope assessment" below).
+## Deviation judgements
 
-## R<n> trace (verified, not trusted)
+The report lists 7 deviations, not 6.
 
-- **R1** → `frontend/package.json` `@angular/{common,core,forms,platform-browser,platform-browser-dynamic,router} ^22.1.4`, `@angular/{cli,compiler,compiler-cli} ^22.x`, `angular-eslint ^22.1.0`. (R3, R5, R7 use the same evidence at the same major; all met.)
-- **R2/R4/R6/R8** → per-stage verify slices, all runnable in one combined invocation through `./init.sh`: frontend `ng lint`/`ng build`/`ng test` + backend `cargo fmt`/`clippy`/`build`/`test`. Verified green above.
-- **R9** → `frontend/eslint.config.js` present with the prescribed rule set; `frontend/.eslintrc.json` absent; `npm --prefix frontend run lint` exits 0 against the new config.
-- **R10** → `frontend/src/app/app.config.ts:11` still has `provideZoneChangeDetection({ eventCoalescing: true })`. Direct grep confirmed.
-- **R11** → `frontend/package.json` `typescript ~6.0.3` satisfies `>=6.0.0`. Direct read confirmed.
+1. **Font sizes snapped to tokens** (labels 11px vs 10px; inputs/names/titles 12px vs 12–12.5px). **Acceptable.** No criterion pins these sizes, and the conventions say to prefer tokens over repeated arbitrary values. The screenshot difference is barely visible.
+2. **CSS ring spinners instead of an inline SVG.** **Acceptable.** Criteria 4 and 12 only ask for "a spinning indicator" / "a signal spinner". This also keeps every `<svg>` coming from lucide `pick()`, as the feature 3 rules require.
+3. **Sticky topbar.** **Acceptable.** The behaviour is unchanged from feature 3. The reference is a fixed-height artboard, so "sticky" vs "static" is not something it can show.
+4. **Alert-triangle only when something is blocked.** **Acceptable.** The reference only draws the non-empty state, and criterion 6 only constrains the title text and style.
+5. **Blocked note in `font-sans`.** **Acceptable for this feature**, because it matches the reference (the `note` span has no `hs-mono`) and the feature-title precedent in criterion 7. However, `docs/conventions.md` still says that API values render in mono and gives no exception for free-text prose fields (`title`, `note`). Follow-up: amend the conventions so the doc and the code agree. This does not block the feature.
+6. **`w-28` name column below `sm`.** **Acceptable.** It is a responsive addition, and at `sm` and above the width is 200px, which matches the reference.
+7. **Clock moved to the "Open session" title.** **Acceptable.** The reference draws the clock in the h2. Criterion 10 says "clock icon removed" in the context of the terminal block, and the spec asserts there is no clock inside `[data-terminal]`.
 
-## Coordinator's specific concerns (explicit assessment)
+## Notes (not required changes)
 
-1. **Did T9's `--force` leave a real peer conflict?** No. `--force` was used in T9 because the `ng update` peer-check refused to proceed while the legacy `@typescript-eslint/eslint-plugin@7` / `@typescript-eslint/parser@7` (ESLint-v8-only) were still pinned. T11 deleted the legacy packages and added the `typescript-eslint@8.0.0` umbrella that `angular-eslint@22` requires. The current dep tree (`npm ls`) shows only `typescript-eslint@8.68.0` with nested `@typescript-eslint/{eslint-plugin,parser}@8.68.0` — no v7 packages remain. `npm install --dry-run` produces no peer warnings. `npm install` reports "up to date" with no warnings. The conflict that `--force` papered over is genuinely resolved, not hidden.
+- The report says "12 self-hosted `.woff2` files". `dist/*/browser/media` actually has 6 `.woff2` files: sans and mono, each at 400/500/600. The claim is wrong, but nothing is missing.
+- `tailwind.config.js` `backgroundImage.dot-grid` repeats the `#131820` literal instead of reusing the `grid-dot` token. Hex in the config file is allowed, so this is cosmetic.
+- `status.pending` changed from `#57616f` to `#46505f` (the reference `nodeColor`). This also affects any feature 3 usage of `status-pending`, which is acceptable because it now matches the reference.
+- The `npm run format` incident and the doc and package changes were handled by the leader. They are not counted against this feature.
 
-2. **Eager→OnPush scope and test coverage.** This is the only judgment call in the implementation.
-   - **(a) Justification against the approved spec:** `design.md` ("Current state (verified against the live repo, not assumed)") explicitly analyzed the codebase before spec approval and concluded: "All reactive component state is signal-based (`signal`/`computed` in `AuthService` and `DashboardPageComponent`; templates read via signal calls)... This is exactly the pattern that keeps working correctly once Angular v22 flips the default `Component.changeDetection` to `OnPush`... verified no component in this codebase relies on `Default` change detection's 'any leaf mutation triggers a full check' behavior (no unguarded plain-field mutation feeding a template outside a signal)." The 7 components I inspected match this characterization exactly: `LoginPageComponent` and `DashboardPageComponent` are signal-driven; `FeaturesTableComponent`, `OpenSessionCardComponent`, `BlockedFeaturesCardComponent`, `StatusBadgeComponent` are pure `@Input()` presentation components whose data flow is parent-signal → parent-template re-eval → child-input reassign → OnPush re-render. OnPush is the semantically correct choice for this codebase.
-   - **(b) Scope vs. approved R<n>:** Strictly, no R<n> says "convert Eager to OnPush". However: (i) R7 brings in `@angular/* ^22.x`, whose migration schematic is what inserted `Eager` in the first place — overriding a schematic decision is in scope of completing the upgrade; (ii) `design.md`'s explicit escape clause ("any additional file the implementer finds necessary during a given stage ... is still in scope — R2/R4/R6/R8's 'verify green' requirement is the actual acceptance bar per stage, not this file list") covers this; (iii) R9's flat config + the new `angular-eslint` `tsRecommended` config implicitly aligns with OnPush as v22's default.
-   - **(c) Test coverage adequacy:** The 5 Karma tests do not directly assert "OnPush triggers CD correctly" — they assert observable behavior. Two of the three relevant tests (`dashboard-page.component.spec.ts`) do exercise signal-driven rendering end-to-end (the HTTP response flush triggers `features.set(...)` and the subsequent `fixture.detectChanges()` reads the rendered textContent), which is the precise scenario where OnPush would silently fail if it were wrong. The presentation components are exercised transitively via `textContent` assertions on the data they receive. This is adequate to back the change for THIS app, given design.md's pre-implementation signal-driven analysis — but it's not a formal proof of equivalence between OnPush and Default for arbitrary UI mutations. I would have preferred an explicit `R<n>` calling out the change, but the implementer's disclosure in the report (T11 paragraph) and the design.md justification make this acceptable rather than a blocker.
+## Commands run
 
-3. **Stale `Next Step` in session 5 log.** Confirmed — the log still reads "Await user to either install Node v22.22.3+..." despite T9–T13 being `[x]`. This is because the implementer followed the leader's explicit instruction not to run `log-out`, and the harness doesn't auto-refresh `Next Step` on `append-log`. Hygiene-only; will be corrected when the implementer runs `log-out` after this approval.
-
-## Recommendation for the leader (acknowledged, not blocking)
-
-The implementer's recommendation about `.harness.json`'s `verify_command` is sound and complete. The current state — `.nvmrc` at the repo root pinning `22.23.2` but no Node/PATH pin baked into `.harness.json`'s `verify_command` — means the next session will hit the same shadowing problem (`~/.local/share/nvm/v22.19.0/bin` precedes `~/.nvm/versions/node/v22.23.2/bin` in PATH, so a fresh shell's `node -v` returns `v22.19.0`). The implementer correctly documented both options (a) uninstall the secondary nvm and (b) bake the PATH override into `.harness.json`'s `verify_command` — without applying either, deferring to the leader per `AGENTS.md` §0. No action required from the reviewer; flagging so the leader can decide before the next session starts.
-
-## Required Changes (if applicable)
-
-None. Implementation is approved; the implementer may now run `scripts/harness.sh log-out` and refresh the session's stale `Next Step` text at the same time.
+- `./init.sh` → exit 0. Lint passed, build passed, Karma `TOTAL: 27 SUCCESS`. The only `[WARN]` lines are the 2 pre-existing "no tests/ directory" warnings.
+- `grep -rEn '#[0-9a-fA-F]{3,8}\b' src | grep -v environments` → 0 hits.
+- `grep -rEn 'https?://' src | grep -v environments` → 0 hits.
+- `grep -rn 'data-beacon[^-]' src | grep -v spec.ts` → 4 hits.
+- `grep -rn 'animate-' src | grep -v spec.ts | grep -v 'motion-reduce:animate-none'` → 0 hits.
+- `grep -o 'url([^)]*)' dist/*/browser/styles-*.css | grep -c http` → 0; `grep -c 'fonts.googleapis|cdn' dist/*/browser/index.html` → 0.
+- Headless Chrome 1280×800 screenshot of the production build (`dist/*/browser` served locally, `/` → guard → `/login`), compared with a headless render of `login.dc.html` (placeholders filled). Layout, card, header, dot grid, icons and footer match. The only visible differences are the 1px larger labels (deviation 1) and the reference's demo-state error and spinner.
+- I read all 3 spec files in full, plus the 6 changed components, and compared them line by line with both `.dc.html` files (including the `STATUS_TRACK` script block).

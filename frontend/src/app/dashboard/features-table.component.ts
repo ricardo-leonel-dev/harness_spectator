@@ -14,42 +14,47 @@ export interface FeatureRowVm {
   selector: 'app-features-table',
   imports: [LifecycleTrackComponent],
   template: `
-    <table class="w-full border-collapse">
-      <thead>
-        <tr class="border-b border-line text-left">
-          <th class="px-3 py-2 font-sans text-label font-medium uppercase text-muted">#</th>
-          <th class="px-3 py-2 font-sans text-label font-medium uppercase text-muted">Name</th>
-          <th class="px-3 py-2 font-sans text-label font-medium uppercase text-muted">Title</th>
-          <th class="px-3 py-2 font-sans text-label font-medium uppercase text-muted">SDD</th>
-          <th class="px-3 py-2 font-sans text-label font-medium uppercase text-muted">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (f of features; track f.name) {
-          <tr class="border-b border-line bg-panel transition-colors hover:bg-panel-raised">
-            <td class="px-3 py-3 font-mono text-xs text-muted">{{ f.featureNumber }}</td>
-            <td class="px-3 py-3 font-mono text-sm text-text">{{ f.name }}</td>
-            <td class="px-3 py-3 text-sm text-muted">{{ f.title }}</td>
-            <td class="px-3 py-3 font-mono text-xs" [class]="f.sdd ? 'text-text' : 'text-muted'">
-              {{ f.sdd ? 'yes' : '—' }}
-            </td>
-            <td class="px-3 py-3">
-              <app-lifecycle-track [status]="f.status" />
-            </td>
-          </tr>
-        } @empty {
-          <tr class="border-b border-line bg-panel">
-            <td colspan="5" class="px-3 py-6 text-center text-sm text-muted">
-              Nothing queued yet — add a feature with
-              <span class="font-mono text-text">scripts/harness.sh add-feature</span>.
-            </td>
-          </tr>
-        }
-      </tbody>
-    </table>
+    <div
+      class="overflow-hidden rounded-md border border-line bg-panel"
+      [attr.role]="features.length ? 'list' : null"
+    >
+      @for (f of features; track f.name) {
+        <div
+          class="flex items-center gap-3.5 border-b border-edge px-3.5 py-2.75 transition-colors last:border-b-0 hover:bg-row-hover motion-reduce:transition-none"
+          role="listitem"
+          data-feature-row
+        >
+          <span class="w-5 shrink-0 font-mono text-2xs text-faint" data-feature-id>{{
+            idLabel(f.featureNumber)
+          }}</span>
+          <span
+            class="w-28 shrink-0 truncate font-mono text-xs text-text sm:w-[200px]"
+            [title]="f.name"
+            data-feature-name
+            >{{ f.name }}</span
+          >
+          <span
+            class="min-w-0 flex-1 truncate font-sans text-xs text-dim"
+            [title]="f.title"
+            data-feature-title
+            >{{ f.title }}</span
+          >
+          <app-lifecycle-track class="shrink-0" [status]="f.status" />
+        </div>
+      } @empty {
+        <p class="m-0 px-3.5 py-6 text-center text-sm text-muted" data-features-empty>
+          Nothing queued yet — add a feature with
+          <span class="font-mono text-text">scripts/harness.sh add-feature</span>.
+        </p>
+      }
+    </div>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FeaturesTableComponent {
   @Input({ required: true }) features: FeatureRowVm[] = [];
+
+  idLabel(featureNumber: number): string {
+    return String(featureNumber).padStart(2, '0');
+  }
 }

@@ -1,0 +1,208 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif; }
+    a { color: #e8a33d; text-decoration: none; }
+    a:hover { filter: brightness(1.15); }
+    .hs-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+    .hs-row:hover { background: #161b23; }
+    .hs-logout:hover { background: #1a2029 !important; }
+    .hs-logout:disabled { opacity: 0.6; cursor: not-allowed; }
+    @keyframes hs-spin { to { transform: rotate(360deg); } }
+    @keyframes hs-ping { 0% { transform: scale(1); opacity: 0.6; } 75%, 100% { transform: scale(2.8); opacity: 0; } }
+    @keyframes hs-blink { 0%, 45% { opacity: 1; } 50%, 95% { opacity: 0; } 100% { opacity: 1; } }
+    @keyframes hs-fade { from { opacity: 0; } to { opacity: 1; } }
+  </style>
+</helmet>
+
+<div style="width:1440px;height:900px;background:#0a0d12;color:#e6eaf0;display:flex;flex-direction:column;position:relative;overflow:hidden;">
+
+  <header style="display:flex;align-items:center;gap:14px;padding:11px 20px;background:#12161d;border-bottom:1px solid #212a35;flex-shrink:0;">
+    <div style="display:flex;align-items:center;gap:9px;">
+      <span style="position:relative;display:inline-flex;width:9px;height:9px;">
+        <span style="position:absolute;inset:0;border-radius:50%;background:{{accent}};animation:hs-ping 2.4s cubic-bezier(0.4,0,0.6,1) infinite;"></span>
+        <span style="position:absolute;inset:0;border-radius:50%;background:{{accent}};"></span>
+      </span>
+      <span class="hs-mono" style="font-weight:600;font-size:12.5px;letter-spacing:0.1em;color:#f1f4f8;text-transform:uppercase;">Harness</span>
+    </div>
+    <span style="color:#3a4452;">·</span>
+    <span class="hs-mono" style="color:#7c8797;font-size:12px;">{{projectName}}</span>
+
+    <div style="margin-left:auto;display:flex;align-items:center;gap:16px;">
+      <div class="hs-mono" style="display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:0.04em;color:{{beaconColor}};">
+        <span style="position:relative;display:inline-flex;width:7px;height:7px;">
+          <sc-if value="{{hasActive}}" hint-placeholder-val="{{true}}">
+            <span style="position:absolute;inset:0;border-radius:50%;background:{{accent}};animation:hs-ping 1.8s cubic-bezier(0.4,0,0.6,1) infinite;"></span>
+          </sc-if>
+          <span style="position:absolute;inset:0;border-radius:50%;background:{{beaconColor}};"></span>
+        </span>
+        {{beaconLabel}}
+      </div>
+      <span style="width:24px;height:24px;border-radius:50%;background:#1a2029;border:1px solid #212a35;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#e6eaf0;" class="hs-mono">{{userInitial}}</span>
+      <button
+        type="button"
+        class="hs-logout"
+        onClick="{{onLogout}}"
+        disabled="{{loggingOut}}"
+        style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:transparent;color:#c3cad4;border:1px solid #212a35;border-radius:4px;font-size:11.5px;font-family:inherit;cursor:pointer;"
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg>
+        {{logoutLabel}}
+      </button>
+    </div>
+  </header>
+
+  <main style="display:grid;grid-template-columns:1.7fr 1fr;gap:16px;padding:20px;flex:1;min-height:0;">
+    <section style="display:flex;flex-direction:column;gap:9px;min-height:0;">
+      <h1 class="hs-mono" style="margin:0;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.12em;color:#7c8797;">Features</h1>
+      <div style="background:#12161d;border:1px solid #212a35;border-radius:6px;overflow:hidden;">
+        <sc-for list="{{features}}" as="f" hint-placeholder-count="4">
+          <div class="hs-row" style="display:flex;align-items:center;gap:14px;padding:11px 14px;border-bottom:1px solid #1a2029;">
+            <span class="hs-mono" style="color:#46505f;font-size:11.5px;width:20px;flex-shrink:0;">{{f.idLabel}}</span>
+            <span class="hs-mono" style="color:#e6eaf0;font-size:12px;width:200px;flex-shrink:0;">{{f.name}}</span>
+            <span style="color:#8b95a5;font-size:12.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{f.title}}</span>
+
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;width:150px;justify-content:flex-end;">
+              <span style="width:6px;height:6px;border-radius:50%;background:#3a4452;flex-shrink:0;"></span>
+              <span style="width:14px;height:1px;background:{{f.connector}};flex-shrink:0;"></span>
+
+              <sc-if value="{{f.nodeFilled}}" hint-placeholder-val="{{true}}">
+                <span style="position:relative;display:inline-flex;width:7px;height:7px;flex-shrink:0;">
+                  <sc-if value="{{f.pulse}}" hint-placeholder-val="{{false}}">
+                    <span style="position:absolute;inset:0;border-radius:50%;background:{{f.nodeColor}};animation:hs-ping 1.8s cubic-bezier(0.4,0,0.6,1) infinite;"></span>
+                  </sc-if>
+                  <span style="position:absolute;inset:0;border-radius:50%;background:{{f.nodeColor}};"></span>
+                </span>
+              </sc-if>
+              <sc-if value="{{f.nodeHollow}}" hint-placeholder-val="{{false}}">
+                <span style="width:7px;height:7px;border-radius:50%;border:1.5px solid {{f.nodeColor}};flex-shrink:0;"></span>
+              </sc-if>
+
+              <span class="hs-mono" style="color:{{f.labelColor}};font-size:10.5px;letter-spacing:0.03em;width:72px;text-align:right;">{{f.statusLabel}}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <aside style="display:flex;flex-direction:column;gap:14px;min-height:0;">
+      <section style="background:#12161d;border:1px solid #212a35;border-radius:6px;padding:14px;">
+        <h2 class="hs-mono" style="margin:0 0 10px;display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.12em;color:#7c8797;">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg>
+          Open session
+        </h2>
+        <div class="hs-mono" style="background:#0a0d12;border:1px solid #1a2029;border-radius:4px;padding:12px 14px;font-size:11.5px;line-height:2;">
+          <div><span style="color:#46505f;">$</span> <span style="color:#7c8797;">agent</span>&nbsp;&nbsp;&nbsp;<span style="color:#e6eaf0;">{{session.agent}}</span></div>
+          <div><span style="color:#46505f;">$</span> <span style="color:#7c8797;">feature</span>&nbsp;<span style="color:#e6eaf0;">{{session.feature}}</span></div>
+          <div><span style="color:#46505f;">$</span> <span style="color:#7c8797;">started</span>&nbsp;<span style="color:#e6eaf0;">{{session.startedAt}}</span></div>
+          <div><span style="color:#46505f;">$</span> <span style="color:#7c8797;">next</span>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#e6eaf0;">{{session.nextStep}}</span><span style="display:inline-block;width:6px;height:12px;background:{{accent}};margin-left:4px;vertical-align:-2px;animation:hs-blink 1.1s step-end infinite;"></span></div>
+        </div>
+      </section>
+
+      <section style="background:#12161d;border:1px solid #212a35;border-radius:6px;padding:14px;">
+        <h2 class="hs-mono" style="margin:0 0 10px;display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.12em;color:#7c8797;">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#e5484d" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+          Blocked
+        </h2>
+        <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px;">
+          <sc-for list="{{blocked}}" as="b" hint-placeholder-count="1">
+            <li style="display:flex;flex-direction:column;gap:3px;padding-left:10px;border-left:2px solid #e5484d;">
+              <span class="hs-mono" style="color:#e6eaf0;font-weight:600;font-size:11.5px;">{{b.name}}</span>
+              <span style="color:#7c8797;font-size:12px;">{{b.note}}</span>
+            </li>
+          </sc-for>
+        </ul>
+      </section>
+    </aside>
+  </main>
+
+  <sc-if value="{{loggingOut}}" hint-placeholder-val="{{false}}">
+    <div style="position:absolute;inset:0;background:rgba(10,13,18,0.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;animation:hs-fade 0.2s ease;">
+      <svg style="transform-box:fill-box;transform-origin:center;animation:hs-spin 0.8s linear infinite;" viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="9" fill="none" stroke="{{accent}}" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="40 100"></circle></svg>
+      <span class="hs-mono" style="font-size:12px;letter-spacing:0.04em;color:#7c8797;">redirecting to sign in…</span>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#e8a33d","options":["#e8a33d","#3ecfe0","#e85d75","#8bd450"]}}'>
+const STATUS_TRACK = {
+  pending: { connector: '#212a35', nodeFilled: false, nodeColor: '#46505f', pulse: false, label: 'pending', labelColor: '#7c8797' },
+  spec_ready: { connector: '#212a35', nodeFilled: false, nodeColor: '#8b7fe8', pulse: false, label: 'spec ready', labelColor: '#8b7fe8' },
+  in_progress: { connector: null, nodeFilled: true, nodeColor: null, pulse: true, label: 'in progress', labelColor: null },
+  blocked: { connector: '#e5484d', nodeFilled: true, nodeColor: '#e5484d', pulse: false, label: 'blocked', labelColor: '#e5484d' },
+  done: { connector: '#3ecf8e', nodeFilled: true, nodeColor: '#3ecf8e', pulse: false, label: 'done', labelColor: '#3ecf8e' },
+};
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { loggingOut: false };
+  }
+
+  onLogout = () => {
+    if (this.state.loggingOut) return;
+    this.setState({ loggingOut: true });
+  };
+
+  renderVals() {
+    const accent = this.props.accent ?? '#e8a33d';
+    const rawFeatures = [
+      { featureNumber: 1, name: 'scaffold_frontend_stack', title: 'Scaffold the frontend + backend stack with login/auth', status: 'done' },
+      { featureNumber: 2, name: 'upgrade_angular_latest', title: 'Upgrade Angular to the latest major', status: 'done' },
+      { featureNumber: 3, name: 'offline_design_system', title: 'Tailwind + CDK + self-hosted fonts/icons', status: 'in_progress' },
+      { featureNumber: 4, name: 'dashboard_density_toggle', title: 'Comfortable / compact row density toggle', status: 'pending' },
+    ];
+    const features = rawFeatures.map((f) => {
+      const meta = STATUS_TRACK[f.status];
+      return {
+        ...f,
+        idLabel: String(f.featureNumber).padStart(2, '0'),
+        connector: meta.connector ?? accent,
+        nodeFilled: meta.nodeFilled,
+        nodeHollow: !meta.nodeFilled,
+        nodeColor: meta.nodeColor ?? accent,
+        pulse: meta.pulse,
+        statusLabel: meta.label,
+        labelColor: meta.labelColor ?? accent,
+      };
+    });
+    const activeCount = rawFeatures.filter((f) => f.status === 'in_progress').length;
+
+    return {
+      accent,
+      projectName: 'spectator_frontend',
+      userInitial: 'R',
+      hasActive: activeCount > 0,
+      beaconLabel: activeCount > 0 ? activeCount + ' agent active' : 'idle',
+      beaconColor: activeCount > 0 ? accent : '#46505f',
+      loggingOut: this.state.loggingOut,
+      logoutLabel: this.state.loggingOut ? 'Logging out…' : 'Log out',
+      onLogout: this.onLogout,
+      features,
+      session: {
+        agent: 'leader -> implementer (Claude Sonnet 5)',
+        feature: 'offline_design_system',
+        startedAt: '2026-08-28 14:12',
+        nextStep: 'wire tailwind.config.js + plex fonts',
+      },
+      blocked: [
+        { name: 'notion_status_sync', note: 'waiting on personal-harness-backend: Status field rename' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>
