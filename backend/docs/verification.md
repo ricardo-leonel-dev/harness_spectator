@@ -30,9 +30,10 @@ not running, the failure is an environment problem to fix, not a regression to d
 
 An `axum`-native integration test (`tower::ServiceExt::oneshot` against the real router built by
 `build_app`, no mocking of the app itself) run against a throwaway `sqlx::test` Postgres schema:
-`GET /api/harness/state` with a validly-signed Supabase JWT (crafted in the test using the same
-test `SUPABASE_JWT_SECRET`) asserts 200 and the seeded feature/session data; the same request with
-a missing, malformed, or expired JWT asserts 401 with no harness data in the body.
+`GET /api/harness/projects` and `GET /api/harness/projects/{slug}/state` with a validly-signed
+Supabase JWT (crafted in the test using the same test `SUPABASE_JWT_SECRET`) assert 200 and the
+seeded mirror-shaped project/feature/session data (an unknown slug asserts 404); the same requests
+with a missing, malformed, or expired JWT assert 401 with no harness data in the body.
 
 The CORS response contract (`Access-Control-*` headers plus the `Vary` header) is pinned separately
 in `tests/cors.rs` — see `specs/cors_regression_test/` for why: a `tower-http` major bump changed
@@ -42,10 +43,11 @@ the `Vary` default while every other test stayed green.
 
 1. `cargo run` (reads `DATABASE_URL`, `SUPABASE_JWT_SECRET`, `FRONTEND_ORIGIN`, `PORT` from `.env`;
    defaults documented in `.env.example`).
-2. Request `GET /api/harness/state` without an `Authorization` header — confirm 401 and a JSON
+2. Request `GET /api/harness/projects` without an `Authorization` header — confirm 401 and a JSON
    `{ "error": ... }` body carrying no harness data.
-3. Request it again with a validly-signed Supabase JWT — confirm 200 and that the returned feature
-   list matches `scripts/harness.sh status` run against the same target project.
+3. Request it again with a validly-signed Supabase JWT — confirm 200 and the mirror's projects;
+   then request `GET /api/harness/projects/<slug>/state` and confirm the returned feature list
+   matches `scripts/harness.sh status` run in that project.
 4. For the full end-to-end path through a browser, start the sibling frontend project and follow its
    `docs/verification.md`'s Level 3.
 

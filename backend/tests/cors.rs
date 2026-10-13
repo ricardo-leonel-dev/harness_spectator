@@ -1,4 +1,4 @@
-//! Regression tests for the CORS contract of `GET /api/harness/state`.
+//! Regression tests for the CORS contract of `GET /api/harness/projects`.
 //!
 //! These tests pin the CORS response headers so a future `tower-http` bump
 //! cannot silently change what the browser sees the way feature 3's
@@ -18,9 +18,9 @@ mod common;
 
 use common::{build_test_app, valid_token, TEST_FRONTEND_ORIGIN};
 
-const PATH: &str = "/api/harness/state";
+const PATH: &str = "/api/harness/projects";
 
-/// A preflight `OPTIONS` against `/api/harness/state` must answer 204 and
+/// A preflight `OPTIONS` against `/api/harness/projects` must answer 204 and
 /// emit exactly the CORS response headers that `backend/src/app.rs`'s
 /// configuration implies — `Allow-Origin` matching the configured
 /// `FRONTEND_ORIGIN`, `Allow-Methods` containing the only configured method
@@ -106,7 +106,7 @@ async fn preflight_options_returns_204_with_expected_cors_headers(pool: sqlx::Pg
     );
 }
 
-/// A non-preflight `GET` against `/api/harness/state` must also carry
+/// A non-preflight `GET` against `/api/harness/projects` must also carry
 /// `Access-Control-Allow-Origin` — the browser reads it on the actual
 /// response, not just on the preflight, and the value must equal the
 /// configured `FRONTEND_ORIGIN` (no drift, no `*` wildcard, no `null`).

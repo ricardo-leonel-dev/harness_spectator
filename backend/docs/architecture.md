@@ -65,7 +65,7 @@ migrated.
    - `src/auth/` — the Supabase JWT verification extractor/middleware. No login, logout, or
      session-issuing route exists here — that is entirely Supabase's responsibility.
    - `src/harness/` — the read-only Postgres reader (`sqlx` queries) and the
-     `/api/harness/state` route.
+     `/api/harness/projects` and `/api/harness/projects/{slug}/state` routes.
    - `src/config.rs` — the only place environment variables are read.
    Don't let implementers introduce additional top-level layers without updating this file first.
 2. **Dependencies.** Approved allowlist, not "anything goes":
@@ -99,9 +99,31 @@ frontend (separate project/process)
      -> [protected routes only] auth extractor              (verifies the Supabase JWT: signature
                                                               via SUPABASE_JWT_SECRET, exp, aud)
      -> route handler
-        - GET /api/harness/state: read-only sqlx query against the target Postgres schema
+        - GET /api/harness/projects: every non-deleted project, ordered by slug, as
+          [{slug, description, counts: {total, done, inProgress, blocked}}]
+        - GET /api/harness/projects/{slug}/state: {project, features, openSession,
+          blockedFeatures} for that slug; 404 + JSON error for an unknown/deleted slug
   -> JSON response
 ```
+
+### Data source: the toolkit's Postgres mirror (feature 4: `multi_project_mirror_api`)
+
+The reader targets the shared Postgres mirror every harness project syncs into; its authoritative
+DDL is the toolkit's `db/schema.postgres.sql` plus `db/migrations/0001_sdd.sql`,
+`0002_superseded.sql` and `0003_paused_sessions.sql`. This backend never changes that schema. The
+project is chosen per request by slug (there is no configured `PROJECT_SLUG`). Reader rules:
+
+- `features.status` is the `feature_status` enum and is read as text (`status::text`); ids are
+  `bigint` (`projects.id` is `uuid`); `session_log.next_step` is `text[]`, joined with `" | "`.
+- Rows with `deleted_at` set are excluded (projects, features, sessions, session entries).
+- The open session is the latest one with `closed_at`, `paused_at` and `deleted_at` all null — a
+  paused session belongs to a blocked feature and is not the open one.
+- There is no blocked-features table: a blocked feature is `features.status = 'blocked'`, and its
+  note is the latest `session_log_entries.entry` of that feature's latest session, or `""` if none.
+- Counts on `/api/harness/projects` are over non-deleted features (`total` includes every status).
+
+`migrations/0001_harness_schema.sql` is a test-only reproduction of the mirror tables and enum the
+reader uses, applied by `#[sqlx::test]`; it is never run against the mirror.
 
 The target database is not necessarily any particular project's own mirror — it is configured via
 the `DATABASE_URL` env var, so the same backend can point at any sibling harness project's mirrored

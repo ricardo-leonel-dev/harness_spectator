@@ -6,7 +6,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
-use crate::harness::router::get_harness_state;
+use crate::harness::router::{get_project_state, get_projects};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,7 +31,8 @@ pub fn build_app(pool: PgPool, config: Config) -> Router {
         ]);
 
     Router::new()
-        .route("/api/harness/state", get(get_harness_state))
+        .route("/api/harness/projects", get(get_projects))
+        .route("/api/harness/projects/{slug}/state", get(get_project_state))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
         .layer(cors)

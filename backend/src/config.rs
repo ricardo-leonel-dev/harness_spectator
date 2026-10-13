@@ -16,7 +16,6 @@ pub struct Config {
     pub database_url: String,
     pub supabase_jwt_secret: String,
     pub frontend_origin: String,
-    pub project_slug: String,
 }
 
 impl Config {
@@ -29,14 +28,12 @@ impl Config {
         let database_url = require_env("DATABASE_URL")?;
         let supabase_jwt_secret = require_env("SUPABASE_JWT_SECRET")?;
         let frontend_origin = require_env("FRONTEND_ORIGIN")?;
-        let project_slug = require_env("PROJECT_SLUG")?;
 
         Ok(Self {
             port,
             database_url,
             supabase_jwt_secret,
             frontend_origin,
-            project_slug,
         })
     }
 }
