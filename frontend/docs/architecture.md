@@ -23,7 +23,8 @@ the filesystem directly.
   backend does not issue or store any session of its own — it verifies the Supabase-issued JWT
   (sent as a `Bearer` token) on every protected route.
 - **Data:** this frontend never reaches a database. All harness state arrives as JSON from the
-  backend's `GET /api/harness/state`.
+  backend: the project list from `GET /api/harness/projects`, and one project's state from
+  `GET /api/harness/projects/{slug}/state` (rendered at the `/projects/:slug` route).
 
 ### Why Angular over React/Vue (discarded alternative)
 
@@ -119,7 +120,8 @@ browser
 browser
   -> HttpClient request, authInterceptor adds
      Authorization: Bearer <access_token>                 (src/app/core/)
-  -> backend GET /api/harness/state                       (separate project/process)
+  -> backend GET /api/harness/projects                    (separate project/process)
+          GET /api/harness/projects/{slug}/state
   <- JSON response
   -> HarnessApiService
   -> Angular components (src/app/dashboard/)

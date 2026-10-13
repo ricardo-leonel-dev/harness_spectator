@@ -20,7 +20,7 @@ export interface FeatureRowVm {
     >
       @for (f of features; track f.name) {
         <div
-          class="flex items-center gap-3.5 border-b border-edge px-3.5 py-2.75 transition-colors last:border-b-0 hover:bg-row-hover motion-reduce:transition-none"
+          class="flex flex-wrap items-center gap-x-3.5 gap-y-1 border-b border-edge px-3.5 py-2.75 transition-colors last:border-b-0 hover:bg-row-hover motion-reduce:transition-none sm:flex-nowrap"
           role="listitem"
           data-feature-row
         >
@@ -28,13 +28,13 @@ export interface FeatureRowVm {
             idLabel(f.featureNumber)
           }}</span>
           <span
-            class="w-28 shrink-0 truncate font-mono text-xs text-text sm:w-[200px]"
+            class="min-w-0 flex-1 truncate font-mono text-xs text-text sm:w-[200px] sm:flex-none sm:shrink-0"
             [title]="f.name"
             data-feature-name
             >{{ f.name }}</span
           >
           <span
-            class="min-w-0 flex-1 truncate font-sans text-xs text-dim"
+            class="order-last min-w-0 basis-full truncate pl-[2.125rem] font-sans text-xs text-dim sm:order-none sm:flex-1 sm:basis-auto sm:pl-0"
             [title]="f.title"
             data-feature-title
             >{{ f.title }}</span

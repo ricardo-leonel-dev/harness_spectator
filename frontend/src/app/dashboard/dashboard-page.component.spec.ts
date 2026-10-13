@@ -1,10 +1,12 @@
 import { TestBed, fakeAsync, tick, flushMicrotasks } from '@angular/core/testing';
 import { provideHttpClient, withInterceptors, withXhr } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
-import { provideRouter, Router } from '@angular/router';
+import { provideRouter, Router, Routes } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
 import { Session } from '@supabase/supabase-js';
 
-import { DashboardPageComponent } from './dashboard-page.component';
+import { DashboardPageComponent, LAST_PROJECT_STORAGE_KEY } from './dashboard-page.component';
+import { routes } from '../app.routes';
 import { AuthService } from '../auth/auth.service';
 import { SUPABASE_CLIENT, Supabase } from '../auth/supabase-client';
 import { LoginPageComponent } from '../auth/login-page.component';
@@ -28,6 +30,39 @@ interface HarnessStatePayload {
   } | null;
   blockedFeatures: Array<{ name: string; note: string }>;
 }
+
+interface ProjectSummaryPayload {
+  slug: string;
+  description: string;
+  counts: { total: number; done: number; inProgress: number; blocked: number };
+}
+
+const PROJECTS: ProjectSummaryPayload[] = [
+  {
+    slug: 'demo-project',
+    description: 'demo',
+    counts: { total: 2, done: 1, inProgress: 1, blocked: 0 },
+  },
+  {
+    slug: 'other-project',
+    description: 'second project',
+    counts: { total: 4, done: 1, inProgress: 0, blocked: 2 },
+  },
+];
+
+const PROJECTS_URL = `${environment.apiBaseUrl}/api/harness/projects`;
+
+function stateUrl(slug: string): string {
+  return `${environment.apiBaseUrl}/api/harness/projects/${slug}/state`;
+}
+
+const TEST_ROUTES: Routes = routes.map((r) => {
+  if (r.path === 'login') return { path: 'login', component: LoginPageComponent };
+  if (r.path === '' && r.loadComponent) {
+    return { ...r, loadComponent: undefined, component: DashboardPageComponent };
+  }
+  return r;
+});
 
 const SEEDED_STATE: HarnessStatePayload = {
   project: { slug: 'demo-project', description: 'demo' },
@@ -101,7 +136,7 @@ describe('DashboardPageComponent', () => {
     await TestBed.configureTestingModule({
       imports: [DashboardPageComponent],
       providers: [
-        provideRouter([{ path: 'login', component: LoginPageComponent }]),
+        provideRouter(TEST_ROUTES),
         provideHttpClient(withXhr(), withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
         { provide: SUPABASE_CLIENT, useValue: buildSupabaseStub() as unknown as Supabase },
@@ -113,43 +148,54 @@ describe('DashboardPageComponent', () => {
 
   afterEach(() => {
     httpTesting.verify();
+    document.querySelector('.cdk-overlay-container')?.replaceChildren();
+    localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
   });
 
-  function renderWith(state: HarnessStatePayload): HTMLElement {
+  function boot(url: string): RouterTestingHarness {
     const auth = TestBed.inject(AuthService);
     void auth.init();
     flushMicrotasks();
 
-    const fixture = TestBed.createComponent(DashboardPageComponent);
-    fixture.detectChanges();
+    let harness: RouterTestingHarness | null = null;
+    void RouterTestingHarness.create().then((h) => (harness = h));
+    flushMicrotasks();
+    void harness!.navigateByUrl(url);
     tick();
+    harness!.detectChanges();
+    return harness!;
+  }
 
-    httpTesting.expectOne(`${environment.apiBaseUrl}/api/harness/state`).flush(state);
-
-    fixture.detectChanges();
+  function settle(harness: RouterTestingHarness): void {
+    harness.detectChanges();
     tick();
-    return fixture.nativeElement as HTMLElement;
+    harness.detectChanges();
+  }
+
+  function renderWith(state: HarnessStatePayload): HTMLElement {
+    const harness = boot('/projects/demo-project');
+    httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+    httpTesting.expectOne(stateUrl('demo-project')).flush(state);
+    settle(harness);
+    return harness.routeNativeElement as HTMLElement;
   }
 
   it('attaches the Supabase access token as Authorization: Bearer and renders the seeded data', fakeAsync(() => {
-    const auth = TestBed.inject(AuthService);
-    void auth.init();
-    flushMicrotasks();
+    const harness = boot('/projects/demo-project');
 
-    const fixture = TestBed.createComponent(DashboardPageComponent);
-    fixture.detectChanges();
-    tick();
+    const list = httpTesting.expectOne(PROJECTS_URL);
+    expect(list.request.method).toBe('GET');
+    expect(list.request.headers.get('Authorization')).toBe('Bearer real-access-token');
+    list.flush(PROJECTS);
 
-    const req = httpTesting.expectOne(`${environment.apiBaseUrl}/api/harness/state`);
+    const req = httpTesting.expectOne(stateUrl('demo-project'));
     expect(req.request.method).toBe('GET');
     expect(req.request.headers.get('Authorization')).toBe('Bearer real-access-token');
 
     req.flush(SEEDED_STATE);
+    settle(harness);
 
-    fixture.detectChanges();
-    tick();
-
-    const text = fixture.nativeElement.textContent as string;
+    const text = harness.routeNativeElement!.textContent as string;
     expect(text).toContain('demo-project');
     expect(text).toContain('first');
     expect(text).toContain('Second');
@@ -407,16 +453,13 @@ describe('DashboardPageComponent', () => {
 
   it('shows a redirecting overlay and a disabled "Logging out…" button until navigation completes', fakeAsync(() => {
     holdSignOut = true;
-    const auth = TestBed.inject(AuthService);
-    void auth.init();
-    flushMicrotasks();
-    const fixture = TestBed.createComponent(DashboardPageComponent);
-    fixture.detectChanges();
-    tick();
-    httpTesting.expectOne(`${environment.apiBaseUrl}/api/harness/state`).flush(SEEDED_STATE);
-    fixture.detectChanges();
+    const harness = boot('/projects/demo-project');
+    httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+    httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+    settle(harness);
+    const fixture = harness.fixture;
 
-    const host = fixture.nativeElement as HTMLElement;
+    const host = harness.routeNativeElement as HTMLElement;
     const router = TestBed.inject(Router);
     const logout = host.querySelector('[data-logout]') as HTMLButtonElement;
     expect(host.querySelector('[data-logout-overlay]')).toBeNull();
@@ -464,24 +507,389 @@ describe('DashboardPageComponent', () => {
   }));
 
   it('surfaces an inline [ERR] banner when the backend returns a non-2xx response', fakeAsync(() => {
-    const auth = TestBed.inject(AuthService);
-    void auth.init();
-    flushMicrotasks();
-
-    const fixture = TestBed.createComponent(DashboardPageComponent);
-    fixture.detectChanges();
-    tick();
-
-    const req = httpTesting.expectOne(`${environment.apiBaseUrl}/api/harness/state`);
+    const harness = boot('/projects/demo-project');
+    httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+    const req = httpTesting.expectOne(stateUrl('demo-project'));
     req.flush({ error: 'unauthorized' }, { status: 401, statusText: 'Unauthorized' });
+    settle(harness);
 
-    fixture.detectChanges();
-    tick();
-
-    const errorBanner = fixture.nativeElement.querySelector('[role="alert"]') as HTMLElement | null;
+    const errorBanner = harness.routeNativeElement!.querySelector(
+      '[role="alert"]',
+    ) as HTMLElement | null;
     expect(errorBanner).toBeTruthy();
     expect(errorBanner?.textContent).toContain('[ERR]');
     expect(errorBanner?.className).toContain('border-status-blocked/35');
     expect(getComputedStyle(errorBanner as HTMLElement).borderLeftWidth).toBe('1px');
   }));
+
+  function overlay(): HTMLElement {
+    return document.querySelector('.cdk-overlay-container') as HTMLElement;
+  }
+
+  function trigger(host: HTMLElement): HTMLButtonElement {
+    return host.querySelector('[data-selector-trigger]') as HTMLButtonElement;
+  }
+
+  function key(target: Element, name: string, keyCode: number): void {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: name, keyCode, bubbles: true }));
+  }
+
+  describe('project selector', () => {
+    it('turns the top-bar slug into a listbox trigger listing every project with its counts', fakeAsync(() => {
+      const harness = boot('/projects/demo-project');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+      settle(harness);
+      const host = harness.routeNativeElement as HTMLElement;
+      const button = trigger(host);
+      const header = host.querySelector('header') as HTMLElement;
+
+      expect(header.contains(button)).toBe(true);
+      expect(button.getAttribute('aria-haspopup')).toBe('listbox');
+      expect(button.getAttribute('aria-expanded')).toBe('false');
+      expect(overlay()?.querySelector('[data-selector-panel]') ?? null).toBeNull();
+
+      button.click();
+      settle(harness);
+
+      expect(button.getAttribute('aria-expanded')).toBe('true');
+      const list = overlay().querySelector('[data-selector-list]') as HTMLElement;
+      expect(list.getAttribute('role')).toBe('listbox');
+      const options = Array.from(list.querySelectorAll<HTMLElement>('[data-project-option]'));
+      expect(options.map((o) => o.getAttribute('role'))).toEqual(['option', 'option']);
+      expect(
+        options.map((o) => o.querySelector('[data-option-slug]')?.textContent?.trim()),
+      ).toEqual(['demo-project', 'other-project']);
+      for (const o of options) {
+        const slug = o.querySelector('[data-option-slug]') as HTMLElement;
+        expect(slug.className).toContain('font-mono');
+        expect(getComputedStyle(slug).fontFamily).toContain('IBM Plex Mono');
+      }
+      expect(
+        options.map((o) => o.querySelector('[data-option-ratio]')?.textContent?.trim()),
+      ).toEqual(['1/2 done', '1/4 done']);
+      expect(options[0].querySelector('[data-option-flags]')?.textContent).toContain(
+        '1 in progress',
+      );
+      expect(options[1].querySelector('[data-option-flags]')?.textContent).toContain('2 blocked');
+      const bar = options[1].querySelector('[data-option-bar]') as HTMLElement;
+      expect(Array.from(bar.children).map((c) => (c as HTMLElement).style.width)).toEqual([
+        '25%',
+        '0%',
+        '50%',
+      ]);
+      expect(options.map((o) => o.getAttribute('aria-selected'))).toEqual(['true', 'false']);
+    }));
+
+    it('is fully keyboard operable: arrow opens, arrows move, Enter navigates, focus returns to the trigger', fakeAsync(() => {
+      const harness = boot('/projects/demo-project');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+      settle(harness);
+      const host = harness.routeNativeElement as HTMLElement;
+      const button = trigger(host);
+
+      button.focus();
+      key(button, 'ArrowDown', 40);
+      settle(harness);
+      flushMicrotasks();
+      settle(harness);
+
+      const list = overlay().querySelector('[data-selector-list]') as HTMLElement;
+      const options = Array.from(list.querySelectorAll<HTMLElement>('[data-project-option]'));
+      expect(list.contains(document.activeElement)).toBe(true);
+      expect(document.activeElement).toBe(options[0]);
+
+      key(document.activeElement as Element, 'ArrowDown', 40);
+      settle(harness);
+      expect(document.activeElement).toBe(options[1]);
+      expect(options[1].classList).toContain('cdk-option-active');
+
+      key(document.activeElement as Element, 'Enter', 13);
+      settle(harness);
+
+      expect(TestBed.inject(Router).url).toBe('/projects/other-project');
+      httpTesting.expectOne(stateUrl('other-project')).flush({
+        ...SEEDED_STATE,
+        project: { slug: 'other-project', description: '' },
+        features: [
+          { featureNumber: 7, name: 'seventh', title: 'Seventh', status: 'done', sdd: false },
+        ],
+        openSession: null,
+      });
+      settle(harness);
+
+      expect(overlay().querySelector('[data-selector-panel]')).toBeNull();
+      expect(document.activeElement).toBe(button);
+      expect(button.getAttribute('aria-expanded')).toBe('false');
+      expect(host.querySelector('[data-project-slug]')?.textContent?.trim()).toBe('other-project');
+      expect(host.querySelector('[data-feature-name]')?.textContent?.trim()).toBe('seventh');
+      expect(localStorage.getItem(LAST_PROJECT_STORAGE_KEY)).toBe('other-project');
+    }));
+
+    it('closes on Escape, or on Enter over the current project, without navigating', fakeAsync(() => {
+      const harness = boot('/projects/demo-project');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+      settle(harness);
+      const button = trigger(harness.routeNativeElement as HTMLElement);
+
+      button.click();
+      settle(harness);
+      flushMicrotasks();
+      key(document.activeElement as Element, 'Escape', 27);
+      settle(harness);
+
+      expect(overlay().querySelector('[data-selector-panel]')).toBeNull();
+      expect(document.activeElement).toBe(button);
+      expect(TestBed.inject(Router).url).toBe('/projects/demo-project');
+
+      button.click();
+      settle(harness);
+      flushMicrotasks();
+      key(document.activeElement as Element, 'Enter', 13);
+      settle(harness);
+      expect(overlay().querySelector('[data-selector-panel]')).toBeNull();
+      expect(document.activeElement).toBe(button);
+      expect(TestBed.inject(Router).url).toBe('/projects/demo-project');
+    }));
+
+    it('navigates between projects by clicking an option and shows an inline loading state meanwhile', fakeAsync(() => {
+      const harness = boot('/projects/demo-project');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+      settle(harness);
+      const host = harness.routeNativeElement as HTMLElement;
+
+      trigger(host).click();
+      settle(harness);
+      (overlay().querySelector('[data-project-option="other-project"]') as HTMLElement).click();
+      settle(harness);
+
+      expect(TestBed.inject(Router).url).toBe('/projects/other-project');
+      const loading = host.querySelector('[data-state-loading]') as HTMLElement;
+      expect(loading.getAttribute('role')).toBe('status');
+      expect(loading.textContent).toContain('other-project');
+      expect(host.querySelector('[data-feature-row]')).toBeNull();
+
+      httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
+      settle(harness);
+      expect(host.querySelector('[data-state-loading]')).toBeNull();
+      expect(host.querySelectorAll('[data-feature-row]').length).toBe(2);
+    }));
+  });
+
+  describe('default route', () => {
+    it('redirects / to the first project when nothing is remembered', fakeAsync(() => {
+      const harness = boot('/');
+      const host = harness.routeNativeElement as HTMLElement;
+      expect(host.querySelector('[data-state-loading]')?.textContent).toContain('Loading projects');
+
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      settle(harness);
+
+      expect(TestBed.inject(Router).url).toBe('/projects/demo-project');
+      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+      settle(harness);
+      expect(localStorage.getItem(LAST_PROJECT_STORAGE_KEY)).toBe('demo-project');
+    }));
+
+    it('redirects / to the last selected project from localStorage', fakeAsync(() => {
+      localStorage.setItem(LAST_PROJECT_STORAGE_KEY, 'other-project');
+      const harness = boot('/');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      settle(harness);
+
+      expect(TestBed.inject(Router).url).toBe('/projects/other-project');
+      httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
+      settle(harness);
+    }));
+
+    it('redirects an in-app navigation back to / once the dashboard is already loaded', fakeAsync(() => {
+      const harness = boot('/projects/other-project');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
+      settle(harness);
+      const router = TestBed.inject(Router);
+
+      void router.navigateByUrl('/');
+      settle(harness);
+
+      expect(router.url).toBe('/projects/other-project');
+      httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
+      settle(harness);
+      const host = harness.routeNativeElement as HTMLElement;
+      expect(host.querySelector('[data-project-slug]')?.textContent?.trim()).toBe('other-project');
+      expect(host.querySelectorAll('[data-feature-row]').length).toBe(2);
+    }));
+
+    it('falls back to the first project when the remembered one no longer exists', fakeAsync(() => {
+      localStorage.setItem(LAST_PROJECT_STORAGE_KEY, 'gone-project');
+      const harness = boot('/');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      settle(harness);
+
+      expect(TestBed.inject(Router).url).toBe('/projects/demo-project');
+      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+      settle(harness);
+    }));
+
+    it('shows an inline empty state when the mirror has no projects', fakeAsync(() => {
+      const harness = boot('/');
+      httpTesting.expectOne(PROJECTS_URL).flush([]);
+      settle(harness);
+      const host = harness.routeNativeElement as HTMLElement;
+
+      expect(TestBed.inject(Router).url).toBe('/');
+      expect(host.querySelector('[data-no-projects]')?.textContent).toContain('No projects');
+
+      trigger(host).click();
+      settle(harness);
+      expect(overlay().querySelector('[data-selector-empty]')).toBeTruthy();
+    }));
+
+    it('surfaces a project-list failure inline on the page and inside the selector', fakeAsync(() => {
+      const harness = boot('/');
+      httpTesting
+        .expectOne(PROJECTS_URL)
+        .flush({ error: 'boom' }, { status: 500, statusText: 'Server Error' });
+      settle(harness);
+      const host = harness.routeNativeElement as HTMLElement;
+
+      expect(TestBed.inject(Router).url).toBe('/');
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain('[ERR]');
+      expect(host.querySelector('app-features-table')).toBeNull();
+      expect(host.querySelector('aside')).toBeNull();
+      expect(host.textContent).not.toContain('Nothing queued yet');
+      expect(host.textContent).not.toContain('No agent session open.');
+      expect(host.textContent).not.toContain('Nothing blocked.');
+
+      trigger(host).click();
+      settle(harness);
+      const panelError = overlay().querySelector('[data-selector-error]') as HTMLElement;
+      expect(panelError.getAttribute('role')).toBe('alert');
+      expect(panelError.textContent).toContain('Could not load projects');
+      const message = panelError.lastElementChild as HTMLElement;
+      expect(message.className).toContain('min-w-0');
+      expect(getComputedStyle(message).overflowWrap).toBe('break-word');
+    }));
+  });
+
+  describe('unknown project', () => {
+    it('shows an inline 404 with a way back to the selector, and does not remember the slug', fakeAsync(() => {
+      const harness = boot('/projects/nope');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting
+        .expectOne(stateUrl('nope'))
+        .flush({ error: 'not found' }, { status: 404, statusText: 'Not Found' });
+      settle(harness);
+      const host = harness.routeNativeElement as HTMLElement;
+
+      const banner = host.querySelector('[data-not-found]') as HTMLElement;
+      expect(banner.getAttribute('role')).toBe('alert');
+      expect(banner.textContent).toContain('nope');
+      expect(host.querySelector('app-features-table')).toBeNull();
+      expect(host.querySelector('aside')).toBeNull();
+      expect(localStorage.getItem(LAST_PROJECT_STORAGE_KEY)).toBeNull();
+
+      (banner.querySelector('[data-choose-project]') as HTMLButtonElement).click();
+      settle(harness);
+      flushMicrotasks();
+      settle(harness);
+
+      const list = overlay().querySelector('[data-selector-list]') as HTMLElement;
+      expect(list).toBeTruthy();
+      expect(list.contains(document.activeElement)).toBe(true);
+
+      (list.querySelector('[data-project-option="demo-project"]') as HTMLElement).click();
+      settle(harness);
+      expect(TestBed.inject(Router).url).toBe('/projects/demo-project');
+      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+      settle(harness);
+      expect(host.querySelector('[data-not-found]')).toBeNull();
+      expect(host.querySelectorAll('[data-feature-row]').length).toBe(2);
+    }));
+  });
+
+  describe('phone width', () => {
+    function mountAt360(nodes: HTMLElement[]): { doc: Document; remove: () => void } {
+      const css = Array.from(document.styleSheets)
+        .map((sheet) => {
+          try {
+            return Array.from(sheet.cssRules)
+              .map((r) => r.cssText)
+              .join('\n');
+          } catch {
+            return '';
+          }
+        })
+        .join('\n');
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'width:360px;height:900px;border:0;position:absolute;left:0;top:0;';
+      document.body.appendChild(iframe);
+      const doc = iframe.contentDocument as Document;
+      doc.open();
+      doc.write('<!doctype html><html><head><style></style></head><body></body></html>');
+      doc.close();
+      (doc.head.querySelector('style') as HTMLStyleElement).textContent = css;
+      for (const node of nodes) doc.body.appendChild(doc.importNode(node, true));
+      return { doc, remove: () => iframe.remove() };
+    }
+
+    it('renders the dashboard at 360px with no horizontal scroll', fakeAsync(() => {
+      const slug = 'a-rather-long-harness-project-slug';
+      const harness = boot(`/projects/${slug}`);
+      httpTesting
+        .expectOne(PROJECTS_URL)
+        .flush([
+          ...PROJECTS,
+          { ...PROJECTS[1], slug, description: 'A long description '.repeat(10) },
+        ]);
+      httpTesting.expectOne(stateUrl(slug)).flush({
+        ...SEEDED_STATE,
+        features: [
+          {
+            featureNumber: 12,
+            name: 'an_extremely_long_feature_identifier_name',
+            title: 'A long feature title that keeps going '.repeat(5),
+            status: 'in_progress',
+            sdd: true,
+          },
+        ],
+        openSession: {
+          agent: 'leader -> implementer (Some Long Model Name)',
+          feature: 'an_extremely_long_feature_identifier_name',
+          startedAt: '2026-08-27T00:00:00Z',
+          nextStep: 'a-very-long-unbroken-next-step-token-'.repeat(4),
+        },
+        blockedFeatures: [{ name: 'blocked_feature', note: 'waiting on '.repeat(20) }],
+      });
+      settle(harness);
+      const host = harness.routeNativeElement as HTMLElement;
+      const { doc, remove } = mountAt360([host]);
+      try {
+        expect(doc.documentElement.clientWidth).toBe(360);
+        expect(doc.documentElement.scrollWidth).toBeLessThanOrEqual(360);
+
+        const header = doc.querySelector('header') as HTMLElement;
+        expect(header.scrollWidth).toBeLessThanOrEqual(header.clientWidth);
+        for (const el of Array.from(header.querySelectorAll<HTMLElement>('*'))) {
+          if (el.closest('.sr-only')) continue;
+          expect(el.getBoundingClientRect().right)
+            .withContext(el.outerHTML.slice(0, 80))
+            .toBeLessThanOrEqual(360);
+        }
+        const slugEl = header.querySelector('[data-project-slug]') as HTMLElement;
+        expect(slugEl.getBoundingClientRect().width).toBeGreaterThan(40);
+
+        for (const row of Array.from(doc.querySelectorAll<HTMLElement>('[data-feature-row]'))) {
+          expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
+          const track = row.querySelector('app-lifecycle-track') as HTMLElement;
+          expect(track.getBoundingClientRect().right).toBeLessThanOrEqual(360);
+        }
+      } finally {
+        remove();
+      }
+    }));
+  });
 });

@@ -38,6 +38,7 @@ module.exports = {
         tiny: ['0.6875rem', { lineHeight: '1rem' }],
         micro: ['0.65625rem', { lineHeight: '1rem' }],
         '2xs': ['0.71875rem', { lineHeight: '1rem' }],
+        tag: ['0.625rem', { lineHeight: '1rem' }],
       },
       spacing: {
         1.75: '0.4375rem',
