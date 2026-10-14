@@ -1,4 +1,5 @@
 import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
+import { LucideAngularModule, Clock } from 'lucide-angular';
 
 export interface OpenSessionVm {
   agent: string;
@@ -9,63 +10,51 @@ export interface OpenSessionVm {
 
 @Component({
   selector: 'app-open-session-card',
-  standalone: true,
+  imports: [LucideAngularModule],
+  providers: [LucideAngularModule.pick({ Clock }).providers ?? []],
   template: `
-    <section class="card">
-      <h2>Open session</h2>
+    <section class="rounded-md border border-line bg-panel p-3.5">
+      <h2
+        class="m-0 mb-2.5 flex items-center gap-1.5 font-mono text-label font-semibold uppercase text-muted"
+      >
+        <lucide-icon name="clock" class="block h-3 w-3" />
+        Open session
+      </h2>
       @if (session) {
-        <dl>
-          <dt>Agent</dt>
-          <dd>{{ session.agent }}</dd>
-          <dt>Feature</dt>
-          <dd>{{ session.feature }}</dd>
-          <dt>Started</dt>
-          <dd>{{ session.startedAt }}</dd>
-          <dt>Next step</dt>
-          <dd>{{ session.nextStep ?? '—' }}</dd>
-        </dl>
+        <div
+          class="rounded border border-edge bg-ink px-3.5 py-3 font-mono text-2xs leading-[2]"
+          data-terminal
+        >
+          @for (line of lines(session); track line.key; let last = $last) {
+            <div class="break-words" data-terminal-line>
+              <span class="text-faint" data-prompt>$</span>
+              <span class="ml-[1ch] inline-block w-[8ch] text-muted" data-key>{{ line.key }}</span>
+              <span class="text-text" data-value>{{ line.value }}</span>
+              @if (last) {
+                <span
+                  class="ml-1 inline-block h-3 w-1.5 animate-caret bg-signal align-[-2px] motion-reduce:animate-none"
+                  data-caret
+                ></span>
+              }
+            </div>
+          }
+        </div>
       } @else {
-        <p class="empty">No open session.</p>
+        <p class="m-0 text-sm text-muted">No agent session open.</p>
       }
     </section>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styles: [
-    `
-      .card {
-        background: #18181b;
-        border: 1px solid #2d2d34;
-        border-radius: 6px;
-        padding: 12px;
-      }
-      h2 {
-        margin: 0 0 8px;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #a1a1aa;
-      }
-      dl {
-        display: grid;
-        grid-template-columns: max-content 1fr;
-        gap: 4px 12px;
-        margin: 0;
-        font-size: 12px;
-      }
-      dt {
-        color: #71717a;
-      }
-      dd {
-        margin: 0;
-      }
-      .empty {
-        font-size: 12px;
-        color: #71717a;
-        font-style: italic;
-      }
-    `,
-  ],
 })
 export class OpenSessionCardComponent {
   @Input() session: OpenSessionVm | null = null;
+
+  lines(session: OpenSessionVm): Array<{ key: string; value: string }> {
+    return [
+      { key: 'agent', value: session.agent },
+      { key: 'feature', value: session.feature },
+      { key: 'started', value: session.startedAt },
+      { key: 'next', value: session.nextStep ?? '—' },
+    ];
+  }
 }

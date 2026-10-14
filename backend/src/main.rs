@@ -4,7 +4,7 @@ use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 
 use harness_frontend_backend::app::build_app;
-use harness_frontend_backend::config::Config;
+use harness_frontend_backend::config::{AuthConfig, Config};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,7 +17,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    let config = Config::from_env()?;
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("configuration error: {err}");
+            std::process::exit(1);
+        }
+    };
+    match &config.auth {
+        AuthConfig::Supabase { .. } => tracing::info!("auth mode: supabase"),
+        AuthConfig::Local(local) => {
+            tracing::info!(users = local.users.len(), "auth mode: local")
+        }
+    }
 
     let pool = PgPoolOptions::new()
         .max_connections(8)

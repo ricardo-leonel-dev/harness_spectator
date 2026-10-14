@@ -1,6 +1,6 @@
 import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 
-import { StatusBadgeComponent } from './status-badge.component';
+import { LifecycleTrackComponent } from './lifecycle-track.component';
 
 export interface FeatureRowVm {
   featureNumber: number;
@@ -12,63 +12,49 @@ export interface FeatureRowVm {
 
 @Component({
   selector: 'app-features-table',
-  imports: [StatusBadgeComponent],
+  imports: [LifecycleTrackComponent],
   template: `
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Name</th>
-          <th>Title</th>
-          <th>SDD</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (f of features; track f.name) {
-          <tr>
-            <td>{{ f.featureNumber }}</td>
-            <td>{{ f.name }}</td>
-            <td>{{ f.title }}</td>
-            <td>{{ f.sdd ? '✓' : '—' }}</td>
-            <td><app-status-badge [status]="f.status" /></td>
-          </tr>
-        } @empty {
-          <tr>
-            <td colspan="5" class="empty">No features yet.</td>
-          </tr>
-        }
-      </tbody>
-    </table>
+    <div
+      class="overflow-hidden rounded-md border border-line bg-panel"
+      [attr.role]="features.length ? 'list' : null"
+    >
+      @for (f of features; track f.name) {
+        <div
+          class="flex flex-wrap items-center gap-x-3.5 gap-y-1 border-b border-edge px-3.5 py-2.75 transition-colors last:border-b-0 hover:bg-row-hover motion-reduce:transition-none sm:flex-nowrap"
+          role="listitem"
+          data-feature-row
+        >
+          <span class="w-5 shrink-0 font-mono text-2xs text-faint" data-feature-id>{{
+            idLabel(f.featureNumber)
+          }}</span>
+          <span
+            class="min-w-0 flex-1 truncate font-mono text-xs text-text sm:w-[200px] sm:flex-none sm:shrink-0"
+            [title]="f.name"
+            data-feature-name
+            >{{ f.name }}</span
+          >
+          <span
+            class="order-last min-w-0 basis-full truncate pl-[2.125rem] font-sans text-xs text-dim sm:order-none sm:flex-1 sm:basis-auto sm:pl-0"
+            [title]="f.title"
+            data-feature-title
+            >{{ f.title }}</span
+          >
+          <app-lifecycle-track class="shrink-0" [status]="f.status" />
+        </div>
+      } @empty {
+        <p class="m-0 px-3.5 py-6 text-center text-sm text-muted" data-features-empty>
+          Nothing queued yet — add a feature with
+          <span class="font-mono text-text">scripts/harness.sh add-feature</span>.
+        </p>
+      }
+    </div>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styles: [
-    `
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 12px;
-      }
-      th,
-      td {
-        text-align: left;
-        padding: 6px 8px;
-        border-bottom: 1px solid #2d2d34;
-      }
-      th {
-        color: #a1a1aa;
-        font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-      }
-      .empty {
-        text-align: center;
-        color: #71717a;
-        font-style: italic;
-      }
-    `,
-  ],
 })
 export class FeaturesTableComponent {
   @Input({ required: true }) features: FeatureRowVm[] = [];
+
+  idLabel(featureNumber: number): string {
+    return String(featureNumber).padStart(2, '0');
+  }
 }
