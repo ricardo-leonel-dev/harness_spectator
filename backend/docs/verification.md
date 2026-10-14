@@ -30,9 +30,17 @@ not running, the failure is an environment problem to fix, not a regression to d
 
 An `axum`-native integration test (`tower::ServiceExt::oneshot` against the real router built by
 `build_app`, no mocking of the app itself) run against a throwaway `sqlx::test` Postgres schema:
-`GET /api/harness/state` with a validly-signed Supabase JWT (crafted in the test using the same
-test `SUPABASE_JWT_SECRET`) asserts 200 and the seeded feature/session data; the same request with
-a missing, malformed, or expired JWT asserts 401 with no harness data in the body.
+`GET /api/harness/projects` and `GET /api/harness/projects/{slug}/state` with a validly-signed
+Supabase JWT (crafted in the test using the same test `SUPABASE_JWT_SECRET`) assert 200 and the
+seeded mirror-shaped project/feature/session data (an unknown slug asserts 404); the same requests
+with a missing, malformed, or expired JWT assert 401 with no harness data in the body.
+
+Auth modes (feature 5, `local_auth_mode`) are covered by `tests/auth.rs`: `GET /api/auth/mode` in
+both modes, `POST /api/auth/login` in local mode (token claims, identical `401` for a wrong password
+or an unknown email, `400` for a malformed body, `404` in supabase mode), and mode separation on the
+protected routes (a token valid for one mode is `401` in the other). `tests/binaries.rs` runs the real
+executables with an empty environment: the server exits non-zero naming the bad variable, and
+`hash-password` prints a verifiable argon2id hash.
 
 The CORS response contract (`Access-Control-*` headers plus the `Vary` header) is pinned separately
 in `tests/cors.rs` — see `specs/cors_regression_test/` for why: a `tower-http` major bump changed
@@ -40,13 +48,25 @@ the `Vary` default while every other test stayed green.
 
 ### Level 3 — Manual Smoke Test (optional but recommended)
 
-1. `cargo run` (reads `DATABASE_URL`, `SUPABASE_JWT_SECRET`, `FRONTEND_ORIGIN`, `PORT` from `.env`;
-   defaults documented in `.env.example`).
-2. Request `GET /api/harness/state` without an `Authorization` header — confirm 401 and a JSON
+1. `cargo run` (reads `DATABASE_URL`, `AUTH_MODE`, `SUPABASE_JWT_SECRET`, `FRONTEND_ORIGIN`, `PORT`
+   from `.env`; defaults documented in `.env.example`). Steps 2–3 are supabase mode.
+2. Request `GET /api/harness/projects` without an `Authorization` header — confirm 401 and a JSON
    `{ "error": ... }` body carrying no harness data.
-3. Request it again with a validly-signed Supabase JWT — confirm 200 and that the returned feature
-   list matches `scripts/harness.sh status` run against the same target project.
-4. For the full end-to-end path through a browser, start the sibling frontend project and follow its
+3. Request it again with a validly-signed Supabase JWT — confirm 200 and the mirror's projects;
+   then request `GET /api/harness/projects/<slug>/state` and confirm the returned feature list
+   matches `scripts/harness.sh status` run in that project.
+4. Local mode (no Supabase project needed):
+   1. `read -rs PW && printf '%s\n' "$PW" | cargo run --bin hash-password` and copy the printed hash.
+   2. In `.env`: `AUTH_MODE=local`, `LOCAL_AUTH_SECRET=<openssl rand -base64 48>`,
+      `LOCAL_AUTH_USERS='you@example.com:<hash>'` (single quotes required), then `cargo run`; the log
+      shows `auth mode: local`.
+   3. `curl -s localhost:4000/api/auth/mode` → `{"mode":"local"}`.
+   4. `curl -s -X POST localhost:4000/api/auth/login -H 'Content-Type: application/json'
+      -d '{"email":"you@example.com","password":"<password>"}'` → `{"accessToken":…,"expiresAt":…}`;
+      a wrong password → `401 {"error":"unauthorized"}`.
+   5. `curl -s localhost:4000/api/harness/projects -H "Authorization: Bearer <accessToken>"` → `200`
+      and the mirror's projects; a Supabase token is `401` in this mode.
+5. For the full end-to-end path through a browser, start the sibling frontend project and follow its
    `docs/verification.md`'s Level 3.
 
 ## Anti-patterns (do not do)

@@ -22,8 +22,19 @@ the filesystem directly.
   `@supabase/supabase-js` client to perform the login flow and holds the resulting session; the
   backend does not issue or store any session of its own — it verifies the Supabase-issued JWT
   (sent as a `Bearer` token) on every protected route.
+  **Local mode (feature 6: `local_auth_login`).** The backend exposes a runtime `AUTH_MODE` through
+  the public `GET /api/auth/mode` (`supabase` by default, or `local`). `AuthService.init()` runs from
+  `provideAppInitializer`, so the mode is resolved before the first guard evaluation. In `local`
+  mode the login form posts to `POST /api/auth/login`, which returns a backend-issued HS256 token
+  (`{ accessToken, expiresAt }`); the Supabase client is never constructed (it is resolved lazily
+  through the `Injector` on supabase branches only). If the mode request fails, times out (5 s) or
+  returns an unknown mode, the app fails closed (`unavailable`): the guard redirects to `/login`,
+  the login page shows an `[ERR]` banner, and the next submit retries the mode request once. The
+  guard, interceptor and dashboard read one provider-neutral `AuthSession`
+  (`{ accessToken, email, expiresAt }`) in both modes.
 - **Data:** this frontend never reaches a database. All harness state arrives as JSON from the
-  backend's `GET /api/harness/state`.
+  backend: the project list from `GET /api/harness/projects`, and one project's state from
+  `GET /api/harness/projects/{slug}/state` (rendered at the `/projects/:slug` route).
 
 ### Why Angular over React/Vue (discarded alternative)
 
@@ -84,8 +95,11 @@ Supabase is already the target data platform.
    message) — no empty `catch`/unhandled `error` callback, no error logged to the console and
    otherwise ignored.
 4. **State/mutability.** Component state via Angular signals; the only cross-cutting mutable state
-   is `AuthService`'s session signal (backed by the Supabase client's own session persistence in
-   `localStorage`, which `@supabase/supabase-js` manages). No other global mutable singletons.
+   is `AuthService`'s mode and session signals. In supabase mode the session is backed by the
+   Supabase client's own persistence in `localStorage`, which `@supabase/supabase-js` manages; in
+   local mode it is backed by one `localStorage` entry, `harness.localSession`
+   (`{ accessToken, expiresAt, email }`), which `AuthService` validates on startup, clears on
+   logout or expiry, and removes at startup in supabase mode. No other global mutable singletons.
 5. **Visual design.** This app renders with no prebuilt component library and no external network
    dependency for its own look:
    - **Styling:** Tailwind CSS utility classes are the only styling mechanism (see
@@ -116,10 +130,19 @@ browser
   -> Supabase Auth (GoTrue, hosted)
   <- session { access_token, ... }                        (persisted by supabase-js)
 
+browser (startup, before the first route)
+  -> backend GET /api/auth/mode                           (public, 5 s timeout)
+  <- { mode: "supabase" | "local" }                       (anything else -> "unavailable")
+
+browser (local mode only, instead of supabase-js)
+  -> backend POST /api/auth/login { email, password }     (src/app/core/ via src/app/auth/)
+  <- { accessToken, expiresAt }                           (persisted as harness.localSession)
+
 browser
   -> HttpClient request, authInterceptor adds
-     Authorization: Bearer <access_token>                 (src/app/core/)
-  -> backend GET /api/harness/state                       (separate project/process)
+     Authorization: Bearer <accessToken>                  (src/app/core/, either mode)
+  -> backend GET /api/harness/projects                    (separate project/process)
+          GET /api/harness/projects/{slug}/state
   <- JSON response
   -> HarnessApiService
   -> Angular components (src/app/dashboard/)

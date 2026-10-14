@@ -1,101 +1,125 @@
-import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
+import { Component, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
-import { LucideAngularModule, Key, Lock, Mail } from 'lucide-angular';
+import { LucideAngularModule, Coffee, Heart, Key, Mail } from 'lucide-angular';
 
-import { AuthService } from './auth.service';
+import { AuthService, MODE_UNAVAILABLE_MESSAGE } from './auth.service';
 
 @Component({
   selector: 'app-login-page',
   imports: [ReactiveFormsModule, LucideAngularModule],
-  providers: [LucideAngularModule.pick({ Key, Lock, Mail }).providers ?? []],
+  providers: [LucideAngularModule.pick({ Coffee, Heart, Key, Mail }).providers ?? []],
   template: `
-    <div class="grid min-h-screen place-items-center bg-ink px-6 py-12">
+    <div class="relative grid min-h-screen place-items-center bg-ink px-4 py-12">
+      <div
+        class="pointer-events-none absolute inset-0 bg-dot-grid bg-dots opacity-60"
+        aria-hidden="true"
+        data-dot-grid
+      ></div>
+
       <form
-        class="w-full max-w-sm rounded-sm border border-line bg-panel p-8"
+        class="relative flex w-full max-w-[368px] flex-col gap-4 rounded-md border border-line bg-panel p-[30px] shadow-card"
         [formGroup]="form"
         (ngSubmit)="onSubmit()"
       >
-        <div class="flex items-center gap-3">
-          <span
-            class="relative grid h-9 w-9 place-items-center rounded-sm border border-line bg-panel-raised"
-          >
-            <lucide-icon name="lock" class="h-4 w-4 text-signal" />
-            <span class="absolute -right-1 -top-1 flex h-2 w-2" data-beacon>
-              <span
-                class="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-70 motion-reduce:hidden"
-              ></span>
-              <span class="relative inline-flex h-2 w-2 rounded-full bg-signal"></span>
-            </span>
+        <div class="mb-0.5 flex flex-col items-center gap-3" data-login-header>
+          <span class="relative inline-flex h-3 w-3" data-beacon="login-mark">
+            <span
+              class="absolute inset-0 animate-beacon rounded-full bg-signal motion-reduce:hidden motion-reduce:animate-none"
+              data-beacon-ping
+            ></span>
+            <span class="absolute inset-0 rounded-full bg-signal"></span>
           </span>
-          <h1 class="font-mono text-sm tracking-tight text-text">
-            harness<span class="px-1 text-signal">.</span>spectator
-          </h1>
-        </div>
-
-        <p class="mt-6 text-sm leading-relaxed text-muted">
-          Sign in to watch the agents work this project's feature queue.
-        </p>
-
-        <div class="mt-6 flex flex-col gap-4">
-          <div class="flex flex-col gap-2">
-            <label for="login-email" class="font-mono text-label uppercase text-muted">
-              Email
-            </label>
-            <div class="relative">
-              <lucide-icon
-                name="mail"
-                class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
-              />
-              <input
-                id="login-email"
-                type="email"
-                formControlName="email"
-                autocomplete="email"
-                class="w-full rounded-sm border border-line bg-ink py-2 pl-9 pr-3 font-mono text-sm text-text caret-signal outline-none placeholder:text-muted/60 focus:border-signal focus:ring-1 focus:ring-signal"
-              />
-            </div>
-          </div>
-
-          <div class="flex flex-col gap-2">
-            <label for="login-password" class="font-mono text-label uppercase text-muted">
-              Password
-            </label>
-            <div class="relative">
-              <lucide-icon
-                name="key"
-                class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
-              />
-              <input
-                id="login-password"
-                type="password"
-                formControlName="password"
-                autocomplete="current-password"
-                class="w-full rounded-sm border border-line bg-ink py-2 pl-9 pr-3 font-mono text-sm text-text caret-signal outline-none placeholder:text-muted/60 focus:border-signal focus:ring-1 focus:ring-signal"
-              />
-            </div>
+          <div class="flex flex-col items-center gap-1">
+            <h1 class="m-0 font-sans text-[17px] font-semibold tracking-[-0.01em] text-bright">
+              Sign in
+            </h1>
+            <p class="m-0 font-mono text-micro uppercase tracking-[0.14em] text-subtle">
+              harness · spectator
+            </p>
           </div>
         </div>
 
-        @if (errorMessage()) {
+        <div class="flex flex-col gap-1.5">
+          <label for="login-email" class="font-mono text-label uppercase text-muted">Email</label>
+          <div class="relative flex items-center">
+            <span
+              class="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-faint"
+              data-field-icon
+            >
+              <lucide-icon name="mail" class="block h-3.5 w-3.5" />
+            </span>
+            <input
+              id="login-email"
+              type="email"
+              formControlName="email"
+              autocomplete="email"
+              placeholder="you@example.com"
+              class="w-full rounded border border-line bg-ink py-[9px] pl-8 pr-2.5 font-mono text-xs text-text caret-signal outline-none placeholder:text-faint focus:border-signal"
+            />
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <label for="login-password" class="font-mono text-label uppercase text-muted">
+            Password
+          </label>
+          <div class="relative flex items-center">
+            <span
+              class="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-faint"
+              data-field-icon
+            >
+              <lucide-icon name="key" class="block h-3.5 w-3.5" />
+            </span>
+            <input
+              id="login-password"
+              type="password"
+              formControlName="password"
+              autocomplete="current-password"
+              placeholder="••••••••"
+              class="w-full rounded border border-line bg-ink py-[9px] pl-8 pr-2.5 font-mono text-xs text-text caret-signal outline-none placeholder:text-faint focus:border-signal"
+            />
+          </div>
+        </div>
+
+        @if (bannerMessage()) {
           <div
-            class="mt-4 flex gap-2 rounded-sm border-l-2 border-status-blocked bg-status-blocked/10 px-3 py-2 font-mono text-xs leading-relaxed text-text"
+            class="flex items-center gap-2 rounded border border-status-blocked/35 bg-status-blocked/[0.12] px-2.5 py-2 text-xs text-err-text"
             role="alert"
           >
-            <span class="text-status-blocked">[ERR]</span>
-            <span>{{ errorMessage() }}</span>
+            <span class="shrink-0 font-mono text-[10px] tracking-[0.08em] text-status-blocked">
+              [ERR]
+            </span>
+            <span>{{ bannerMessage() }}</span>
           </div>
         }
 
         <button
           type="submit"
           [disabled]="form.invalid || submitting()"
-          class="mt-6 w-full rounded-sm bg-signal py-2 text-sm font-medium text-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          class="flex items-center justify-center gap-2 rounded bg-signal px-3 py-2.5 text-[13px] font-semibold text-ink hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100"
         >
+          @if (submitting()) {
+            <span
+              class="inline-block h-[13px] w-[13px] animate-spin-fast rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none"
+              aria-hidden="true"
+              data-spinner
+            ></span>
+          }
           {{ submitting() ? 'Signing in…' : 'Sign in' }}
         </button>
 
-        <p class="mt-6 text-center text-xs text-muted">Secured by Supabase Auth</p>
+        <footer
+          class="mt-0.5 flex items-center justify-center font-mono text-[9.5px] uppercase tracking-[0.08em] text-faint"
+        >
+          <span class="inline-flex items-center gap-[0.5em]" aria-hidden="true" data-footer-visual>
+            <span>Made with</span>
+            <lucide-icon name="coffee" class="block h-[1em] w-[1em] text-current" />
+            <span>and</span>
+            <lucide-icon name="heart" class="block h-[1em] w-[1em] text-signal" />
+          </span>
+          <span class="sr-only">Made with coffee and love</span>
+        </footer>
       </form>
     </div>
   `,
@@ -113,6 +137,10 @@ export class LoginPageComponent {
 
   readonly submitting = signal(false);
   readonly errorMessage = signal<string | null>(null);
+  readonly bannerMessage = computed(
+    () =>
+      this.errorMessage() ?? (this.auth.mode() === 'unavailable' ? MODE_UNAVAILABLE_MESSAGE : null),
+  );
 
   async onSubmit(): Promise<void> {
     if (this.form.invalid) return;

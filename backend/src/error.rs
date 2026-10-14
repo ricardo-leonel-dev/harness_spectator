@@ -6,6 +6,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ApiError {
+    #[error("bad request")]
+    BadRequest,
     #[error("unauthorized")]
     Unauthorized,
     #[error("not found")]
@@ -17,6 +19,7 @@ pub enum ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
+            ApiError::BadRequest => (StatusCode::BAD_REQUEST, "bad request"),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found"),
             ApiError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal error"),

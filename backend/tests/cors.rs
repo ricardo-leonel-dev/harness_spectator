@@ -1,4 +1,4 @@
-//! Regression tests for the CORS contract of `GET /api/harness/state`.
+//! Regression tests for the CORS contract of `GET /api/harness/projects`.
 //!
 //! These tests pin the CORS response headers so a future `tower-http` bump
 //! cannot silently change what the browser sees the way feature 3's
@@ -16,16 +16,19 @@ use tower::ServiceExt;
 
 mod common;
 
-use common::{build_test_app, valid_token, TEST_FRONTEND_ORIGIN};
+use common::{
+    build_test_app, build_test_app_with, build_test_config_local, lazy_pool, valid_token,
+    TEST_FRONTEND_ORIGIN,
+};
 
-const PATH: &str = "/api/harness/state";
+const PATH: &str = "/api/harness/projects";
 
-/// A preflight `OPTIONS` against `/api/harness/state` must answer 204 and
+/// A preflight `OPTIONS` against `/api/harness/projects` must answer 204 and
 /// emit exactly the CORS response headers that `backend/src/app.rs`'s
 /// configuration implies — `Allow-Origin` matching the configured
-/// `FRONTEND_ORIGIN`, `Allow-Methods` containing the only configured method
-/// (`GET`), and `Allow-Headers` containing the only two configured request
-/// headers (`authorization` and `content-type`).
+/// `FRONTEND_ORIGIN`, `Allow-Methods` listing exactly the configured methods
+/// (`GET` and `POST`, R37), and `Allow-Headers` listing exactly the two
+/// configured request headers (`authorization` and `content-type`, R37).
 #[sqlx::test]
 async fn preflight_options_returns_204_with_expected_cors_headers(pool: sqlx::PgPool) {
     let app = build_test_app(pool).await;
@@ -73,14 +76,17 @@ async fn preflight_options_returns_204_with_expected_cors_headers(pool: sqlx::Pg
         .expect("Access-Control-Allow-Methods must be present on preflight")
         .to_str()
         .unwrap();
-    // app.rs: allow_methods([Method::GET]) — only GET is configured, so the
-    // value must list GET (the comma-separated form is the wire format the
-    // spec uses, so we accept any ordering/trimming).
-    assert!(
-        allow_methods
-            .split(',')
-            .any(|m| m.trim().eq_ignore_ascii_case("GET")),
-        "Access-Control-Allow-Methods must contain GET (configured in app.rs); got: {allow_methods}"
+    // R37: exactly GET and POST (the comma-separated form is the wire format,
+    // so we accept any ordering/trimming).
+    let mut methods: Vec<String> = allow_methods
+        .split(',')
+        .map(|m| m.trim().to_ascii_uppercase())
+        .collect();
+    methods.sort_unstable();
+    assert_eq!(
+        methods,
+        ["GET", "POST"],
+        "Access-Control-Allow-Methods must be exactly GET and POST (R37); got: {allow_methods}"
     );
 
     let allow_headers = resp
@@ -89,24 +95,65 @@ async fn preflight_options_returns_204_with_expected_cors_headers(pool: sqlx::Pg
         .expect("Access-Control-Allow-Headers must be present on preflight")
         .to_str()
         .unwrap();
-    // app.rs: allow_headers([AUTHORIZATION, CONTENT_TYPE]) — both must be
-    // echoed back. Header names on the wire are case-insensitive, so compare
-    // case-insensitively.
-    let header_names: Vec<String> = allow_headers
+    // R37: exactly authorization and content-type. Header names on the wire
+    // are case-insensitive, so compare case-insensitively.
+    let mut header_names: Vec<String> = allow_headers
         .split(',')
         .map(|h| h.trim().to_ascii_lowercase())
         .collect();
-    assert!(
-        header_names.iter().any(|h| h == "authorization"),
-        "Access-Control-Allow-Headers must contain authorization (configured in app.rs); got: {allow_headers}"
-    );
-    assert!(
-        header_names.iter().any(|h| h == "content-type"),
-        "Access-Control-Allow-Headers must contain content-type (configured in app.rs); got: {allow_headers}"
+    header_names.sort_unstable();
+    assert_eq!(
+        header_names,
+        ["authorization", "content-type"],
+        "Access-Control-Allow-Headers must be exactly authorization and content-type (R37); got: {allow_headers}"
     );
 }
 
-/// A non-preflight `GET` against `/api/harness/state` must also carry
+/// R36: the browser's preflight for the local-mode JSON login (`POST` with a
+/// `Content-Type` header) must be allowed for the configured frontend origin,
+/// otherwise every local sign-in fails before the request is sent.
+#[tokio::test]
+async fn login_preflight_allows_post_and_content_type() {
+    let app = build_test_app_with(lazy_pool(), build_test_config_local());
+
+    let req = Request::builder()
+        .method(Method::OPTIONS)
+        .uri("/api/auth/login")
+        .header("Origin", TEST_FRONTEND_ORIGIN)
+        .header("Access-Control-Request-Method", "POST")
+        .header("Access-Control-Request-Headers", "content-type")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+
+    // tower-http 0.7 preflight status, pinned above.
+    assert_eq!(resp.status(), StatusCode::OK);
+    let header = |name: &str| {
+        resp.headers()
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} must be present on the login preflight"))
+            .to_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(header("access-control-allow-origin"), TEST_FRONTEND_ORIGIN);
+    let methods = header("access-control-allow-methods");
+    assert!(
+        methods
+            .split(',')
+            .any(|m| m.trim().eq_ignore_ascii_case("POST")),
+        "Access-Control-Allow-Methods must contain POST; got: {methods}"
+    );
+    let headers = header("access-control-allow-headers");
+    assert!(
+        headers
+            .split(',')
+            .any(|h| h.trim().eq_ignore_ascii_case("content-type")),
+        "Access-Control-Allow-Headers must contain content-type; got: {headers}"
+    );
+}
+
+/// A non-preflight `GET` against `/api/harness/projects` must also carry
 /// `Access-Control-Allow-Origin` — the browser reads it on the actual
 /// response, not just on the preflight, and the value must equal the
 /// configured `FRONTEND_ORIGIN` (no drift, no `*` wildcard, no `null`).
@@ -143,8 +190,8 @@ async fn non_preflight_get_carries_allow_origin(pool: sqlx::PgPool) {
 ///
 ///   * `allow_origin(HeaderValue::from_str(&config.frontend_origin))` —
 ///     a single fixed origin, so the origin predicate returns false,
-///   * `allow_methods([Method::GET])` — a single fixed method, so the
-///     method predicate returns false,
+///   * `allow_methods([Method::GET, Method::POST])` — a fixed list, the same
+///     in both auth modes, so the method predicate returns false,
 ///   * `allow_headers([AUTHORIZATION, CONTENT_TYPE])` — a fixed list,
 ///     so the request-headers predicate returns false.
 ///
