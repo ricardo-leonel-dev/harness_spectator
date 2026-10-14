@@ -91,6 +91,7 @@ describe('ProjectSelectorComponent in a 360px viewport', () => {
     const doc = iframe.contentDocument as Document;
     const http = TestBed.inject(HttpTestingController);
     void TestBed.inject(AuthService).init();
+    http.expectOne(`${environment.apiBaseUrl}/api/auth/mode`).flush({ mode: 'supabase' });
     flushMicrotasks();
 
     let harness: RouterTestingHarness | null = null;

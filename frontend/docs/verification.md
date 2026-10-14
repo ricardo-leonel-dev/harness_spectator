@@ -46,6 +46,21 @@ together.
 5. Reload the page — confirm the session persists (still logged in) without re-entering
    credentials, since `supabase-js` persists the session and refreshes the access token.
 
+**Local-mode variant** (needs the backend's `local_auth_mode` feature, started with
+`AUTH_MODE=local` and a configured local user):
+
+1. Start the backend in local mode, then `npm start`.
+2. Open the dev server URL — confirm the login page renders identically to supabase mode (same
+   footer), and the browser's network panel shows `GET /api/auth/mode` answering `{"mode":"local"}`
+   and no request to the Supabase project.
+3. Submit a wrong password — confirm the `[ERR] Invalid login credentials` banner and no
+   `harness.localSession` entry in `localStorage`.
+4. Sign in with the configured user — confirm the dashboard renders, `harness.localSession` holds
+   `{ accessToken, expiresAt, email }`, and backend requests carry `Authorization: Bearer <token>`.
+5. Reload — still signed in. Log out — back on `/login` and the entry is gone.
+6. Stop the backend and reload `/login` — confirm the
+   `[ERR] Cannot reach the backend to choose a sign-in method…` banner.
+
 ## Anti-patterns (do not do)
 
 - "I added the feature, it should work." → missing executable proof.

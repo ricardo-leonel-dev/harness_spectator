@@ -7,7 +7,7 @@ import { Session } from '@supabase/supabase-js';
 
 import { DashboardPageComponent, LAST_PROJECT_STORAGE_KEY } from './dashboard-page.component';
 import { routes } from '../app.routes';
-import { AuthService } from '../auth/auth.service';
+import { AuthService, LOCAL_SESSION_STORAGE_KEY } from '../auth/auth.service';
 import { SUPABASE_CLIENT, Supabase } from '../auth/supabase-client';
 import { LoginPageComponent } from '../auth/login-page.component';
 import { authInterceptor } from '../core/auth.interceptor';
@@ -51,6 +51,7 @@ const PROJECTS: ProjectSummaryPayload[] = [
 ];
 
 const PROJECTS_URL = `${environment.apiBaseUrl}/api/harness/projects`;
+const MODE_URL = `${environment.apiBaseUrl}/api/auth/mode`;
 
 function stateUrl(slug: string): string {
   return `${environment.apiBaseUrl}/api/harness/projects/${slug}/state`;
@@ -84,6 +85,7 @@ describe('DashboardPageComponent', () => {
   let signOutCalls: number;
   let holdSignOut: boolean;
   let releaseSignOut: (() => void) | null;
+  let supabaseFactoryCalls: number;
 
   function buildSupabaseStub(): unknown {
     const session: Session = {
@@ -133,13 +135,22 @@ describe('DashboardPageComponent', () => {
     signOutCalls = 0;
     holdSignOut = false;
     releaseSignOut = null;
+    supabaseFactoryCalls = 0;
+    localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
+    localStorage.removeItem(LOCAL_SESSION_STORAGE_KEY);
     await TestBed.configureTestingModule({
       imports: [DashboardPageComponent],
       providers: [
         provideRouter(TEST_ROUTES),
         provideHttpClient(withXhr(), withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
-        { provide: SUPABASE_CLIENT, useValue: buildSupabaseStub() as unknown as Supabase },
+        {
+          provide: SUPABASE_CLIENT,
+          useFactory: () => {
+            supabaseFactoryCalls += 1;
+            return buildSupabaseStub() as unknown as Supabase;
+          },
+        },
       ],
     }).compileComponents();
 
@@ -150,11 +161,13 @@ describe('DashboardPageComponent', () => {
     httpTesting.verify();
     document.querySelector('.cdk-overlay-container')?.replaceChildren();
     localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
+    localStorage.removeItem(LOCAL_SESSION_STORAGE_KEY);
   });
 
-  function boot(url: string): RouterTestingHarness {
+  function boot(url: string, mode: 'supabase' | 'local' = 'supabase'): RouterTestingHarness {
     const auth = TestBed.inject(AuthService);
     void auth.init();
+    httpTesting.expectOne(MODE_URL).flush({ mode });
     flushMicrotasks();
 
     let harness: RouterTestingHarness | null = null;
@@ -504,6 +517,37 @@ describe('DashboardPageComponent', () => {
 
     expect(signOutCalls).toBe(1);
     expect(router.url).toBe('/login');
+  }));
+
+  it('in local mode, uses the stored token and email and logs out without Supabase (R11, R13, R17)', fakeAsync(() => {
+    localStorage.setItem(
+      LOCAL_SESSION_STORAGE_KEY,
+      JSON.stringify({
+        accessToken: 'local-token',
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        email: 'zoe@example.com',
+      }),
+    );
+    const harness = boot('/projects/demo-project', 'local');
+    const list = httpTesting.expectOne(PROJECTS_URL);
+    expect(list.request.headers.get('Authorization')).toBe('Bearer local-token');
+    list.flush(PROJECTS);
+    const state = httpTesting.expectOne(stateUrl('demo-project'));
+    expect(state.request.headers.get('Authorization')).toBe('Bearer local-token');
+    state.flush(SEEDED_STATE);
+    settle(harness);
+
+    const host = harness.routeNativeElement as HTMLElement;
+    expect(host.querySelector('[data-user-initial]')?.textContent?.trim()).toBe('Z');
+
+    (host.querySelector('[data-logout]') as HTMLButtonElement).click();
+    flushMicrotasks();
+    tick();
+
+    expect(TestBed.inject(Router).url).toBe('/login');
+    expect(localStorage.getItem(LOCAL_SESSION_STORAGE_KEY)).toBeNull();
+    expect(signOutCalls).toBe(0);
+    expect(supabaseFactoryCalls).toBe(0);
   }));
 
   it('surfaces an inline [ERR] banner when the backend returns a non-2xx response', fakeAsync(() => {

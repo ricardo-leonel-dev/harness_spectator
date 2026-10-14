@@ -251,7 +251,7 @@ export class DashboardPageComponent implements OnInit {
 
   readonly userInitial = computed(() => {
     const session = this.auth.session();
-    const email = session?.user?.email ?? '?';
+    const email = session?.email ?? '?';
     return email.charAt(0).toUpperCase();
   });
 

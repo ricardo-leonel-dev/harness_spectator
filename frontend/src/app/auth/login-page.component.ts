@@ -1,14 +1,14 @@
-import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
+import { Component, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
-import { LucideAngularModule, Key, Mail } from 'lucide-angular';
+import { LucideAngularModule, Coffee, Heart, Key, Mail } from 'lucide-angular';
 
-import { AuthService } from './auth.service';
+import { AuthService, MODE_UNAVAILABLE_MESSAGE } from './auth.service';
 
 @Component({
   selector: 'app-login-page',
   imports: [ReactiveFormsModule, LucideAngularModule],
-  providers: [LucideAngularModule.pick({ Key, Mail }).providers ?? []],
+  providers: [LucideAngularModule.pick({ Coffee, Heart, Key, Mail }).providers ?? []],
   template: `
     <div class="relative grid min-h-screen place-items-center bg-ink px-4 py-12">
       <div
@@ -82,7 +82,7 @@ import { AuthService } from './auth.service';
           </div>
         </div>
 
-        @if (errorMessage()) {
+        @if (bannerMessage()) {
           <div
             class="flex items-center gap-2 rounded border border-status-blocked/35 bg-status-blocked/[0.12] px-2.5 py-2 text-xs text-err-text"
             role="alert"
@@ -90,7 +90,7 @@ import { AuthService } from './auth.service';
             <span class="shrink-0 font-mono text-[10px] tracking-[0.08em] text-status-blocked">
               [ERR]
             </span>
-            <span>{{ errorMessage() }}</span>
+            <span>{{ bannerMessage() }}</span>
           </div>
         }
 
@@ -112,7 +112,13 @@ import { AuthService } from './auth.service';
         <footer
           class="mt-0.5 flex items-center justify-center font-mono text-[9.5px] uppercase tracking-[0.08em] text-faint"
         >
-          Secured by Supabase Auth
+          <span class="inline-flex items-center gap-[0.5em]" aria-hidden="true" data-footer-visual>
+            <span>Made with</span>
+            <lucide-icon name="coffee" class="block h-[1em] w-[1em] text-current" />
+            <span>and</span>
+            <lucide-icon name="heart" class="block h-[1em] w-[1em] text-signal" />
+          </span>
+          <span class="sr-only">Made with coffee and love</span>
         </footer>
       </form>
     </div>
@@ -131,6 +137,10 @@ export class LoginPageComponent {
 
   readonly submitting = signal(false);
   readonly errorMessage = signal<string | null>(null);
+  readonly bannerMessage = computed(
+    () =>
+      this.errorMessage() ?? (this.auth.mode() === 'unavailable' ? MODE_UNAVAILABLE_MESSAGE : null),
+  );
 
   async onSubmit(): Promise<void> {
     if (this.form.invalid) return;
