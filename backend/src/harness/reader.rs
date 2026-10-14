@@ -355,6 +355,137 @@ struct ProcessLogEntryDbRow {
     created_at: DateTime<Utc>,
 }
 
+const TOP_PROJECTS_LIMIT: usize = 10;
+
+#[derive(Debug, Serialize)]
+pub struct DashboardResponse {
+    pub overall: OverallProgress,
+    #[serde(rename = "topProjects")]
+    pub top_projects: Vec<ProjectProgress>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OverallProgress {
+    pub done: i64,
+    pub total: i64,
+    pub percentage: f64,
+    #[serde(rename = "byStatus")]
+    pub by_status: StatusBreakdown,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct StatusBreakdown {
+    pub pending: i64,
+    #[serde(rename = "specDrafting")]
+    pub spec_drafting: i64,
+    #[serde(rename = "specReady")]
+    pub spec_ready: i64,
+    #[serde(rename = "inProgress")]
+    pub in_progress: i64,
+    pub blocked: i64,
+    pub done: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectProgress {
+    pub slug: String,
+    pub done: i64,
+    pub total: i64,
+    pub percentage: f64,
+}
+
+#[derive(Debug, FromRow)]
+struct ProjectStatusCountsDbRow {
+    slug: String,
+    pending: i64,
+    spec_drafting: i64,
+    spec_ready: i64,
+    in_progress: i64,
+    blocked: i64,
+    done: i64,
+}
+
+/// Percentage in hundredths, rounded half-up. `0` when `total == 0`.
+fn completion_hundredths(done: i64, total: i64) -> i64 {
+    if total == 0 {
+        0
+    } else {
+        (done * 20000 + total) / (2 * total)
+    }
+}
+
+pub async fn read_dashboard(pool: &PgPool) -> Result<DashboardResponse, ApiError> {
+    let rows: Vec<ProjectStatusCountsDbRow> = sqlx::query_as(
+        "SELECT p.slug,
+                COUNT(*) FILTER (WHERE f.status = 'pending')       AS pending,
+                COUNT(*) FILTER (WHERE f.status = 'spec_drafting') AS spec_drafting,
+                COUNT(*) FILTER (WHERE f.status = 'spec_ready')    AS spec_ready,
+                COUNT(*) FILTER (WHERE f.status = 'in_progress')   AS in_progress,
+                COUNT(*) FILTER (WHERE f.status = 'blocked')       AS blocked,
+                COUNT(*) FILTER (WHERE f.status = 'done')          AS done
+         FROM projects p
+         JOIN features f ON f.project_id = p.id
+         WHERE p.deleted_at IS NULL
+           AND f.deleted_at IS NULL
+           AND f.status <> 'superseded'
+         GROUP BY p.id, p.slug",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut by_status = StatusBreakdown::default();
+    let mut projects: Vec<ProjectProgress> = Vec::with_capacity(rows.len());
+
+    for r in rows {
+        by_status.pending += r.pending;
+        by_status.spec_drafting += r.spec_drafting;
+        by_status.spec_ready += r.spec_ready;
+        by_status.in_progress += r.in_progress;
+        by_status.blocked += r.blocked;
+        by_status.done += r.done;
+
+        let total = r.pending + r.spec_drafting + r.spec_ready + r.in_progress + r.blocked + r.done;
+        let hundredths = completion_hundredths(r.done, total);
+        projects.push(ProjectProgress {
+            slug: r.slug,
+            done: r.done,
+            total,
+            percentage: hundredths as f64 / 100.0,
+        });
+    }
+
+    let overall_total = by_status.pending
+        + by_status.spec_drafting
+        + by_status.spec_ready
+        + by_status.in_progress
+        + by_status.blocked
+        + by_status.done;
+    let overall_done = by_status.done;
+    let overall_hundredths = completion_hundredths(overall_done, overall_total);
+
+    projects.sort_by(|a, b| {
+        b.done
+            .cmp(&a.done)
+            .then_with(|| {
+                let bh = completion_hundredths(b.done, b.total);
+                let ah = completion_hundredths(a.done, a.total);
+                bh.cmp(&ah)
+            })
+            .then_with(|| a.slug.cmp(&b.slug))
+    });
+    projects.truncate(TOP_PROJECTS_LIMIT);
+
+    Ok(DashboardResponse {
+        overall: OverallProgress {
+            done: overall_done,
+            total: overall_total,
+            percentage: overall_hundredths as f64 / 100.0,
+            by_status,
+        },
+        top_projects: projects,
+    })
+}
+
 pub async fn read_feature_log(
     pool: &PgPool,
     project_slug: &str,
@@ -431,4 +562,38 @@ pub async fn read_feature_log(
         .collect();
 
     Ok(FeatureLogResponse { feature, sessions })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::completion_hundredths;
+
+    #[test]
+    fn completion_hundredths_rounds_half_up() {
+        let cases = [
+            ((0, 0), 0),
+            ((0, 3), 0),
+            ((1, 32), 313),
+            ((3, 32), 938),
+            ((1, 16), 625),
+            ((1, 8), 1250),
+            ((1, 3), 3333),
+            ((2, 3), 6667),
+            ((2, 7), 2857),
+            ((5, 5), 10000),
+        ];
+        for ((done, total), expected) in cases {
+            assert_eq!(
+                completion_hundredths(done, total),
+                expected,
+                "completion_hundredths({done}, {total})"
+            );
+        }
+
+        assert_eq!(serde_json::to_string(&(3333_f64 / 100.0)).unwrap(), "33.33");
+        assert_eq!(
+            serde_json::to_string(&(10000_f64 / 100.0)).unwrap(),
+            "100.0"
+        );
+    }
 }
