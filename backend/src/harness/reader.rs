@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::FromRow;
@@ -240,4 +242,193 @@ pub async fn read_project_state(
         open_session: open_session.map(Into::into),
         blocked_features: blocked_features.into_iter().map(Into::into).collect(),
     })
+}
+
+#[derive(Debug, Serialize)]
+pub struct FeatureLogResponse {
+    pub feature: FeatureHeader,
+    pub sessions: Vec<ProcessLogSession>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FeatureHeader {
+    #[serde(rename = "featureNumber")]
+    pub feature_number: i32,
+    pub name: String,
+    pub title: String,
+    pub status: String,
+    pub sdd: bool,
+    pub description: Option<String>,
+    pub acceptance: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProcessLogSession {
+    #[serde(rename = "localId")]
+    pub local_id: i64,
+    pub agent: String,
+    #[serde(rename = "startedAt")]
+    pub started_at: String,
+    #[serde(rename = "closedAt")]
+    pub closed_at: Option<String>,
+    #[serde(rename = "pausedAt")]
+    pub paused_at: Option<String>,
+    pub plan: Option<Vec<String>>,
+    #[serde(rename = "nextStep")]
+    pub next_step: Option<Vec<String>>,
+    pub changes: Option<Vec<String>>,
+    pub verification: Option<String>,
+    pub closure: Option<String>,
+    pub entries: Vec<ProcessLogEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProcessLogEntry {
+    pub entry: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+}
+
+#[derive(Debug, FromRow)]
+struct FeatureHeaderDbRow {
+    id: i64,
+    feature_number: i32,
+    name: String,
+    title: String,
+    status: String,
+    sdd: bool,
+    description: Option<String>,
+    acceptance: Vec<String>,
+}
+
+impl From<FeatureHeaderDbRow> for FeatureHeader {
+    fn from(r: FeatureHeaderDbRow) -> Self {
+        Self {
+            feature_number: r.feature_number,
+            name: r.name,
+            title: r.title,
+            status: r.status,
+            sdd: r.sdd,
+            description: r.description,
+            acceptance: r.acceptance,
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ProcessLogSessionDbRow {
+    id: i64,
+    local_id: i64,
+    agent: String,
+    started_at: DateTime<Utc>,
+    closed_at: Option<DateTime<Utc>>,
+    paused_at: Option<DateTime<Utc>>,
+    plan: Option<Vec<String>>,
+    next_step: Option<Vec<String>>,
+    changes: Option<Vec<String>>,
+    verification: Option<String>,
+    closure: Option<String>,
+}
+
+impl From<ProcessLogSessionDbRow> for ProcessLogSession {
+    fn from(r: ProcessLogSessionDbRow) -> Self {
+        Self {
+            local_id: r.local_id,
+            agent: r.agent,
+            started_at: r.started_at.to_rfc3339(),
+            closed_at: r.closed_at.map(|t| t.to_rfc3339()),
+            paused_at: r.paused_at.map(|t| t.to_rfc3339()),
+            plan: r.plan,
+            next_step: r.next_step,
+            changes: r.changes,
+            verification: r.verification,
+            closure: r.closure,
+            entries: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ProcessLogEntryDbRow {
+    session_id: i64,
+    entry: String,
+    created_at: DateTime<Utc>,
+}
+
+pub async fn read_feature_log(
+    pool: &PgPool,
+    project_slug: &str,
+    feature_name: &str,
+) -> Result<FeatureLogResponse, ApiError> {
+    let project_row: Option<sqlx::types::Uuid> = sqlx::query_scalar(
+        "SELECT id
+         FROM projects
+         WHERE slug = $1 AND deleted_at IS NULL",
+    )
+    .bind(project_slug)
+    .fetch_optional(pool)
+    .await?;
+    let project_id = project_row.ok_or(ApiError::NotFound)?;
+
+    let feature_row: Option<FeatureHeaderDbRow> = sqlx::query_as(
+        "SELECT id, feature_number, name, title, status::text AS status, sdd, description, acceptance
+         FROM features
+         WHERE project_id = $1 AND name = $2 AND deleted_at IS NULL",
+    )
+    .bind(project_id)
+    .bind(feature_name)
+    .fetch_optional(pool)
+    .await?;
+    let feature_db = feature_row.ok_or(ApiError::NotFound)?;
+    let feature_id = feature_db.id;
+    let feature: FeatureHeader = feature_db.into();
+
+    let session_rows: Vec<ProcessLogSessionDbRow> = sqlx::query_as(
+        "SELECT id, local_id, agent, started_at, closed_at, paused_at,
+                plan, next_step, changes, verification, closure
+         FROM session_log
+         WHERE project_id = $1 AND feature_id = $2 AND deleted_at IS NULL
+         ORDER BY started_at ASC, id ASC",
+    )
+    .bind(project_id)
+    .bind(feature_id)
+    .fetch_all(pool)
+    .await?;
+
+    let session_ids: Vec<i64> = session_rows.iter().map(|r| r.id).collect();
+
+    let mut entries_by_session: HashMap<i64, Vec<ProcessLogEntry>> = HashMap::new();
+    if !session_ids.is_empty() {
+        let entry_rows: Vec<ProcessLogEntryDbRow> = sqlx::query_as(
+            "SELECT session_id, entry, created_at
+             FROM session_log_entries
+             WHERE session_id = ANY($1) AND deleted_at IS NULL
+             ORDER BY session_id ASC, created_at ASC, id ASC",
+        )
+        .bind(&session_ids)
+        .fetch_all(pool)
+        .await?;
+        for row in entry_rows {
+            entries_by_session
+                .entry(row.session_id)
+                .or_default()
+                .push(ProcessLogEntry {
+                    entry: row.entry,
+                    created_at: row.created_at.to_rfc3339(),
+                });
+        }
+    }
+
+    let sessions = session_rows
+        .into_iter()
+        .map(|db_row| {
+            let session_id = db_row.id;
+            let mut session: ProcessLogSession = db_row.into();
+            let entries = entries_by_session.remove(&session_id).unwrap_or_default();
+            session.entries = entries;
+            session
+        })
+        .collect();
+
+    Ok(FeatureLogResponse { feature, sessions })
 }

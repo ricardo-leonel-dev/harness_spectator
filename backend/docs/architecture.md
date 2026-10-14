@@ -87,7 +87,8 @@ migrated.
    - `src/bin/hash_password.rs` — the `hash-password` developer binary: reads one password line from
      stdin and prints its argon2id PHC hash for `LOCAL_AUTH_USERS`. Reads no environment.
    - `src/harness/` — the read-only Postgres reader (`sqlx` queries) and the
-     `/api/harness/projects` and `/api/harness/projects/{slug}/state` routes.
+     `/api/harness/projects`, `/api/harness/projects/{slug}/state` and
+     `/api/harness/projects/{slug}/features/{name}/log` routes.
    - `src/config.rs` — the only place environment variables are read.
    Don't let implementers introduce additional top-level layers without updating this file first.
 2. **Dependencies.** Approved allowlist, not "anything goes":
@@ -135,8 +136,22 @@ frontend (separate project/process)
           [{slug, description, counts: {total, done, inProgress, blocked}}]
         - GET /api/harness/projects/{slug}/state: {project, features, openSession,
           blockedFeatures} for that slug; 404 + JSON error for an unknown/deleted slug
+        - GET /api/harness/projects/{slug}/features/{name}/log: {feature, sessions} for
+          that feature — the feature header plus every non-deleted session of that
+          feature with its non-deleted log entries; 404 + JSON error when the project
+          or feature is unknown or soft-deleted. Sessions are ordered by `started_at`
+          ascending (ties broken by `session_log.id`); each session's entries are
+          ordered by `created_at` ascending (ties broken by `session_log_entries.id`).
+          Identical `{ "error": "not found" }` envelope for unknown-project and
+          unknown-feature so the frontend does not have to distinguish the two.
   -> JSON response
 ```
+
+The `feature_process_log` response has no `notes` key and no `reviewStatus` /
+`reviewedBy` / `reviewedAt`: the toolkit's Postgres mirror does not currently
+carry `feature_notes` (per `db/migrations/0002_superseded.sql`) or review
+verdicts on `session_log`, so they cannot be served from here. When the mirror
+adds them, the route gains the keys additively rather than changing shape.
 
 ### Data source: the toolkit's Postgres mirror (feature 4: `multi_project_mirror_api`)
 
