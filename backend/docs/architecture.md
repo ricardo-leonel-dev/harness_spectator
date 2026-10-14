@@ -87,8 +87,9 @@ migrated.
    - `src/bin/hash_password.rs` — the `hash-password` developer binary: reads one password line from
      stdin and prints its argon2id PHC hash for `LOCAL_AUTH_USERS`. Reads no environment.
    - `src/harness/` — the read-only Postgres reader (`sqlx` queries) and the
-     `/api/harness/projects`, `/api/harness/projects/{slug}/state` and
-     `/api/harness/projects/{slug}/features/{name}/log` routes.
+     `/api/harness/projects`, `/api/harness/projects/{slug}/state`,
+     `/api/harness/projects/{slug}/features/{name}/log` and `/api/harness/dashboard`
+     routes.
    - `src/config.rs` — the only place environment variables are read.
    Don't let implementers introduce additional top-level layers without updating this file first.
 2. **Dependencies.** Approved allowlist, not "anything goes":
@@ -144,6 +145,22 @@ frontend (separate project/process)
           ordered by `created_at` ascending (ties broken by `session_log_entries.id`).
           Identical `{ "error": "not found" }` envelope for unknown-project and
           unknown-feature so the frontend does not have to distinguish the two.
+        - GET /api/harness/dashboard: aggregate progress across every project in the
+          mirror — `{overall, topProjects}`. `overall` carries `{done, total,
+          percentage, byStatus}` where `byStatus` is zero-filled across the six
+          countable `feature_status` values (`pending`, `specDrafting`, `specReady`,
+          `inProgress`, `blocked`, `done`); `superseded` features are excluded from
+          every count and percentage. `topProjects` is at most 10 entries, each
+          `{slug, done, total, percentage}`, sorted by `done` descending, then by
+          the returned `percentage` value descending, then by `slug` ascending
+          (byte-wise). Projects with no countable feature are omitted from
+          `topProjects`. Every `percentage` is a 2-decimal float
+          (half-up rounding, computed in integer hundredths); the response carries
+          the value at 2-decimal precision and the frontend formats it for display
+          with exactly 2 decimals (`toFixed(2)`). Every returned `slug` resolves on
+          `GET /api/harness/projects/{slug}/state` because both routes share the
+          `p.deleted_at IS NULL` filter, so the dashboard's chart entries are
+          directly navigable to project detail.
   -> JSON response
 ```
 

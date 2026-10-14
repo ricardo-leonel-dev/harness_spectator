@@ -30,13 +30,13 @@ not running, the failure is an environment problem to fix, not a regression to d
 
 An `axum`-native integration test (`tower::ServiceExt::oneshot` against the real router built by
 `build_app`, no mocking of the app itself) run against a throwaway `sqlx::test` Postgres schema:
-`GET /api/harness/projects`, `GET /api/harness/projects/{slug}/state` and
-`GET /api/harness/projects/{slug}/features/{name}/log` with a validly-signed Supabase JWT (crafted
-in the test using the same test `SUPABASE_JWT_SECRET`) assert 200 and the seeded mirror-shaped
-project/feature/session data (an unknown slug or feature asserts 404 on the latter two endpoints);
-the same requests with a missing, malformed, or expired JWT assert 401 with no harness data in the
-body. The reader's SELECT-only contract is independently re-checked on a pool whose transactions
-default to read-only, including for the new feature-log path.
+`GET /api/harness/projects`, `GET /api/harness/projects/{slug}/state`,
+`GET /api/harness/projects/{slug}/features/{name}/log` and `GET /api/harness/dashboard` with a
+validly-signed Supabase JWT (crafted in the test using the same test `SUPABASE_JWT_SECRET`) assert
+200 and the seeded mirror-shaped project/feature/session data (an unknown slug or feature asserts
+404 on the latter two endpoints); the same requests with a missing, malformed, or expired JWT assert
+401 with no harness data in the body. The reader's SELECT-only contract is independently re-checked
+on a pool whose transactions default to read-only, including for the new feature-log path.
 
 Auth modes (feature 5, `local_auth_mode`) are covered by `tests/auth.rs`: `GET /api/auth/mode` in
 both modes, `POST /api/auth/login` in local mode (token claims, identical `401` for a wrong password
@@ -60,7 +60,11 @@ the `Vary` default while every other test stayed green.
    matches `scripts/harness.sh status` run in that project, then
    `GET /api/harness/projects/<slug>/features/<name>/log` and confirm the response carries a
    `feature` header plus a `sessions` array whose sessions and entries are ordered
-   `started_at`/`created_at` ascending and exclude soft-deleted rows.
+   `started_at`/`created_at` ascending and exclude soft-deleted rows, then
+   `GET /api/harness/dashboard` and confirm the response carries an `overall` block whose
+   `byStatus` totals match the mirror's countable features and a `topProjects` array whose
+   entries are ordered by `done` then `percentage` (descending) then `slug` (ascending), with
+   every returned slug resolving on `/api/harness/projects/<slug>/state` (200, not 404).
 4. Local mode (no Supabase project needed):
    1. `read -rs PW && printf '%s\n' "$PW" | cargo run --bin hash-password` and copy the printed hash.
    2. In `.env`: `AUTH_MODE=local`, `LOCAL_AUTH_SECRET=<openssl rand -base64 48>`,

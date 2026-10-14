@@ -9,11 +9,25 @@ mod common;
 
 use common::{build_test_app, make_token, valid_token, TEST_JWT_SECRET};
 use harness_frontend_backend::harness::reader::{
-    list_projects, read_feature_log, read_project_state,
+    list_projects, read_dashboard, read_feature_log, read_project_state,
 };
 
 const OTHER_JWT_SECRET: &str = "other-jwt-secret-not-valid";
 const PROJECTS_PATH: &str = "/api/harness/projects";
+const DASHBOARD_PATH: &str = "/api/harness/dashboard";
+
+async fn seed_features_with_statuses(
+    pool: &PgPool,
+    project_id: Uuid,
+    first_number: i32,
+    statuses: &[&str],
+) {
+    for (offset, status) in statuses.iter().enumerate() {
+        let number = first_number + offset as i32;
+        let name = format!("f{number}");
+        seed_feature(pool, project_id, number, &name, status, false, false).await;
+    }
+}
 
 async fn seed_project(pool: &PgPool, slug: &str, description: Option<&str>, deleted: bool) -> Uuid {
     sqlx::query_scalar(
@@ -591,6 +605,7 @@ async fn harness_endpoints_return_401_without_a_valid_token(pool: PgPool) {
         PROJECTS_PATH.to_string(),
         state_path("test-project"),
         log_path("test-project", "first_feat"),
+        DASHBOARD_PATH.to_string(),
     ] {
         for (case, token) in unauthorized_cases() {
             let (status, body) = get(pool.clone(), &uri, token).await;
@@ -649,6 +664,11 @@ async fn reader_performs_only_select_queries(pool: PgPool) -> sqlx::Result<()> {
     assert_eq!(log.sessions.len(), 1);
     assert_eq!(log.sessions[0].entries.len(), 1);
     assert_eq!(log.sessions[0].entries[0].entry, "note");
+
+    let dashboard = read_dashboard(&read_only_pool)
+        .await
+        .expect("read_dashboard should succeed on a read-only connection");
+    assert_eq!(dashboard.overall.total, 1);
 
     read_only_pool.close().await;
     Ok(())
@@ -1298,4 +1318,289 @@ async fn feature_log_does_not_cross_projects(pool: PgPool) {
     )
     .await;
     assert_eq!(other_status, StatusCode::OK);
+}
+
+#[sqlx::test]
+async fn dashboard_with_empty_mirror_returns_zeroes(pool: PgPool) {
+    let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({
+            "overall": {
+                "done": 0,
+                "total": 0,
+                "percentage": 0.0,
+                "byStatus": {
+                    "pending": 0,
+                    "specDrafting": 0,
+                    "specReady": 0,
+                    "inProgress": 0,
+                    "blocked": 0,
+                    "done": 0
+                }
+            },
+            "topProjects": []
+        })
+    );
+}
+
+#[sqlx::test]
+async fn dashboard_aggregates_counts_across_projects(pool: PgPool) {
+    let alpha = seed_project(&pool, "alpha", Some("alpha desc"), false).await;
+    let beta = seed_project(&pool, "beta", Some("beta desc"), false).await;
+
+    seed_features_with_statuses(
+        &pool,
+        alpha,
+        1,
+        &[
+            "pending",
+            "spec_drafting",
+            "spec_ready",
+            "in_progress",
+            "blocked",
+            "done",
+            "done",
+        ],
+    )
+    .await;
+    seed_features_with_statuses(&pool, beta, 1, &["done", "pending", "pending"]).await;
+
+    let (status, body) = get(pool.clone(), DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert_eq!(
+        body,
+        json!({
+            "overall": {
+                "done": 3,
+                "total": 10,
+                "percentage": 30.0,
+                "byStatus": {
+                    "pending": 3,
+                    "specDrafting": 1,
+                    "specReady": 1,
+                    "inProgress": 1,
+                    "blocked": 1,
+                    "done": 3
+                }
+            },
+            "topProjects": [
+                { "slug": "alpha", "done": 2, "total": 7, "percentage": 28.57 },
+                { "slug": "beta", "done": 1, "total": 3, "percentage": 33.33 }
+            ]
+        })
+    );
+
+    let top_projects = body["topProjects"].as_array().expect("topProjects array");
+    for entry in top_projects {
+        let slug = entry["slug"].as_str().unwrap();
+        let (state_status, _) = get(pool.clone(), &state_path(slug), Some(valid_token())).await;
+        assert_eq!(
+            state_status,
+            StatusCode::OK,
+            "state for {slug} must resolve"
+        );
+    }
+}
+
+#[sqlx::test]
+async fn dashboard_excludes_deleted_and_superseded_features(pool: PgPool) {
+    let alpha = seed_project(&pool, "alpha", None, false).await;
+    let beta = seed_project(&pool, "beta", None, false).await;
+    let gamma = seed_project(&pool, "gamma", None, false).await;
+
+    seed_features_with_statuses(&pool, alpha, 1, &["done"]).await;
+    seed_features_with_statuses(&pool, alpha, 2, &["pending"]).await;
+    seed_feature(&pool, alpha, 3, "alpha-deleted-done", "done", false, true).await;
+    seed_feature(
+        &pool,
+        alpha,
+        4,
+        "alpha-superseded",
+        "superseded",
+        false,
+        false,
+    )
+    .await;
+
+    seed_feature(
+        &pool,
+        beta,
+        1,
+        "beta-superseded",
+        "superseded",
+        false,
+        false,
+    )
+    .await;
+    seed_feature(
+        &pool,
+        beta,
+        2,
+        "beta-deleted-pending",
+        "pending",
+        false,
+        true,
+    )
+    .await;
+
+    let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["overall"],
+        json!({
+            "done": 1,
+            "total": 2,
+            "percentage": 50.0,
+            "byStatus": {
+                "pending": 1,
+                "specDrafting": 0,
+                "specReady": 0,
+                "inProgress": 0,
+                "blocked": 0,
+                "done": 1
+            }
+        })
+    );
+    assert_eq!(
+        body["topProjects"],
+        json!([{ "slug": "alpha", "done": 1, "total": 2, "percentage": 50.0 }])
+    );
+
+    let _ = gamma;
+}
+
+#[sqlx::test]
+async fn dashboard_excludes_deleted_projects(pool: PgPool) {
+    let deleted = seed_project(&pool, "ghost", None, true).await;
+    let live = seed_project(&pool, "alive", None, false).await;
+
+    seed_features_with_statuses(&pool, deleted, 1, &["done", "done", "done"]).await;
+    seed_features_with_statuses(&pool, live, 1, &["pending"]).await;
+
+    let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["overall"]["done"], 0);
+    assert_eq!(body["overall"]["total"], 1);
+    assert_eq!(body["overall"]["percentage"], 0.0);
+    assert_eq!(
+        body["overall"]["byStatus"],
+        json!({
+            "pending": 1,
+            "specDrafting": 0,
+            "specReady": 0,
+            "inProgress": 0,
+            "blocked": 0,
+            "done": 0
+        })
+    );
+    let slugs: Vec<&str> = body["topProjects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(slugs, vec!["alive"]);
+}
+
+#[sqlx::test]
+async fn dashboard_percentage_is_zero_when_nothing_is_countable(pool: PgPool) {
+    let only = seed_project(&pool, "only", None, false).await;
+    seed_feature(
+        &pool,
+        only,
+        1,
+        "only-superseded",
+        "superseded",
+        false,
+        false,
+    )
+    .await;
+    seed_feature(
+        &pool,
+        only,
+        2,
+        "only-deleted-pending",
+        "pending",
+        false,
+        true,
+    )
+    .await;
+
+    let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["overall"],
+        json!({
+            "done": 0,
+            "total": 0,
+            "percentage": 0.0,
+            "byStatus": {
+                "pending": 0,
+                "specDrafting": 0,
+                "specReady": 0,
+                "inProgress": 0,
+                "blocked": 0,
+                "done": 0
+            }
+        })
+    );
+    assert_eq!(body["topProjects"], json!([]));
+}
+
+#[sqlx::test]
+async fn dashboard_orders_projects_by_done_then_percentage_then_slug(pool: PgPool) {
+    let c = seed_project(&pool, "c-proj", None, false).await;
+    let a = seed_project(&pool, "a-proj", None, false).await;
+    let b = seed_project(&pool, "b-proj", None, false).await;
+    let d = seed_project(&pool, "d-proj", None, false).await;
+    let e = seed_project(&pool, "e-proj", None, false).await;
+
+    seed_features_with_statuses(&pool, c, 1, &["done", "done"]).await;
+    seed_features_with_statuses(&pool, a, 1, &["done"]).await;
+    seed_features_with_statuses(&pool, b, 1, &["done"]).await;
+    seed_features_with_statuses(&pool, d, 1, &["done", "pending", "pending", "pending"]).await;
+    seed_features_with_statuses(&pool, e, 1, &["pending", "pending", "pending"]).await;
+
+    let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    let slugs: Vec<&str> = body["topProjects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        slugs,
+        vec!["c-proj", "a-proj", "b-proj", "d-proj", "e-proj"]
+    );
+}
+
+#[sqlx::test]
+async fn dashboard_limits_top_projects_to_ten(pool: PgPool) {
+    for n in 1..=12 {
+        let slug = format!("p{n:02}");
+        let project = seed_project(&pool, &slug, None, false).await;
+        let count = 13 - n;
+        let statuses: Vec<String> = (0..count).map(|_| "done".to_string()).collect();
+        let status_refs: Vec<&str> = statuses.iter().map(String::as_str).collect();
+        seed_features_with_statuses(&pool, project, 1, &status_refs).await;
+    }
+
+    let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    let top = body["topProjects"].as_array().expect("topProjects array");
+    let slugs: Vec<&str> = top.iter().map(|p| p["slug"].as_str().unwrap()).collect();
+    let expected: Vec<String> = (1..=10).map(|n| format!("p{n:02}")).collect();
+    let expected_refs: Vec<&str> = expected.iter().map(String::as_str).collect();
+    assert_eq!(slugs, expected_refs);
+
+    let total_per_project: i64 = (1..=12).map(|n| 13 - n).sum();
+    assert_eq!(body["overall"]["done"].as_i64().unwrap(), total_per_project);
+    assert_eq!(
+        body["overall"]["total"].as_i64().unwrap(),
+        total_per_project
+    );
 }
