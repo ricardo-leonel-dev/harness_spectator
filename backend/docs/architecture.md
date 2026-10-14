@@ -18,10 +18,19 @@ fullstack framework. The SPA talks to this backend over HTTP; this backend owns 
 - **This project:** Rust + Axum.
 - **Frontend:** Angular (TypeScript, standalone components), a separate project and a separately
   startable process.
-- **Auth:** Supabase Auth (email/password via Supabase's GoTrue). The frontend performs the login
-  flow with `@supabase/supabase-js` and holds the session; this backend does **not** issue or store
-  any session of its own — it verifies the Supabase-issued JWT (sent as a `Bearer` token) on every
-  protected route.
+- **Auth:** two runtime modes chosen by `AUTH_MODE` (feature 5: `local_auth_mode`).
+  - `supabase` (default): Supabase Auth (email/password via Supabase's GoTrue). The frontend performs
+    the login flow with `@supabase/supabase-js` and holds the session; this backend does **not**
+    issue or store any session of its own — it verifies the Supabase-issued JWT (sent as a `Bearer`
+    token) on every protected route.
+  - `local`: for machines/LANs with no Supabase project. Users are configured in `.env`
+    (`LOCAL_AUTH_USERS`, email + argon2id PHC hash); `POST /api/auth/login` checks a password and
+    returns a short-lived HS256 token signed with `LOCAL_AUTH_SECRET`
+    (`iss = "harness-spectator"`, `aud = "harness-spectator-local"`). Tokens are stateless: nothing is
+    stored server-side, there is no refresh or logout endpoint, and rotating `LOCAL_AUTH_SECRET`
+    invalidates every token.
+  - Protected routes accept only tokens valid for the active mode (secret **and** `aud`/`iss`).
+    `GET /api/auth/mode` is public so the frontend can pick its login flow.
 - **Data:** this backend's Postgres schema is designed for Supabase Postgres from day one (see
   "Data Flow" below) — actually migrating existing local Postgres data into that Supabase-hosted
   schema is out of scope and left for later work.
@@ -48,6 +57,14 @@ auth now means this backend's verification path never needs to change when that 
 Rejected self-signed JWT/cookie auth because it re-implements a solved problem for no benefit once
 Supabase is already the target data platform.
 
+**Narrow revival in local mode (feature 5).** Supabase mode is unchanged and remains the default.
+Local mode exists because some deployments (a LAN dashboard on a machine with no Supabase project)
+have no identity provider at all, so "use the managed provider" is not available there. It is kept
+deliberately small so it does not become the hand-rolled credential system rejected above: no user
+table or writes (users live in `.env`), password hashing delegated to the `argon2` crate, stateless
+tokens signed with `jsonwebtoken` (already a dependency), no refresh, no stored sessions, no cookies.
+See `specs/local_auth_mode/design.md` for the rest of the rationale.
+
 ### Why Postgres (Supabase-shaped) over continuing with SQLite (discarded alternative)
 
 An earlier draft had this backend read a local `harness.db` SQLite file directly via a read-only
@@ -62,8 +79,13 @@ migrated.
 ## Principles
 
 1. **Layers.**
-   - `src/auth/` — the Supabase JWT verification extractor/middleware. No login, logout, or
-     session-issuing route exists here — that is entirely Supabase's responsibility.
+   - `src/auth/` — authentication. `jwt.rs` verifies Supabase JWTs; `local_token.rs` issues and
+     verifies local-mode tokens; `password.rs` wraps argon2id hashing/verification; `extractor.rs`
+     holds the `AuthUser` extractor, which dispatches on the active mode; `router.rs` serves
+     `GET /api/auth/mode` and, in local mode only, `POST /api/auth/login`. No logout, refresh or
+     session-storing route exists here.
+   - `src/bin/hash_password.rs` — the `hash-password` developer binary: reads one password line from
+     stdin and prints its argon2id PHC hash for `LOCAL_AUTH_USERS`. Reads no environment.
    - `src/harness/` — the read-only Postgres reader (`sqlx` queries) and the
      `/api/harness/projects` and `/api/harness/projects/{slug}/state` routes.
    - `src/config.rs` — the only place environment variables are read.
@@ -71,12 +93,13 @@ migrated.
 2. **Dependencies.** Approved allowlist, not "anything goes":
    - Runtime: `axum`, `tokio`, `tower`, `tower-http` (`cors`, `trace` features), `serde`,
      `serde_json`, `sqlx` (`postgres`, `runtime-tokio`, `tls-rustls`, `macros`, `uuid`, `chrono`
-     features), `jsonwebtoken`, `dotenvy`, `thiserror`, `tracing`, `tracing-subscriber`.
+     features), `jsonwebtoken`, `dotenvy`, `thiserror`, `tracing`, `tracing-subscriber`, `argon2`
+     (local-mode password hashing, default features).
    - Dev: `sqlx` (`test` support) for integration tests against a throwaway Postgres schema.
    - No ORM beyond `sqlx`'s query layer. Adding a dependency outside this list requires updating
      this file first, in the same spirit as the layers rule above.
 3. **Error handling.** Every error response is JSON `{ "error": "<message>" }` with an appropriate
-   status code (401 unauthorized, 404 not found, 500 internal). A single centralized Axum error type
+   status code (400 bad request, 401 unauthorized, 404 not found, 500 internal). A single centralized Axum error type
    implementing `IntoResponse` is the only place that formats this envelope; internal error details
    (DB errors, JWT parse errors) are logged via `tracing` but never included in the response body.
    No handler silently swallows a `Result::Err` — every fallible operation returns a `Result` that
@@ -86,19 +109,28 @@ migrated.
    `UPDATE`, or `DELETE` statement against the target database — it is a read-only dashboard, not
    another way to run `scripts/harness.sh`. `DATABASE_URL` SHOULD point at a Postgres role granted
    `SELECT` only, so the read-only guarantee holds at the database-privilege level, not just by
-   application-code discipline. Auth is entirely delegated to Supabase — this backend holds no
-   session state of its own.
+   application-code discipline. This holds in both auth modes: local mode reads its users from
+   configuration, never from the database. This backend holds no session state of its own in either
+   mode — Supabase owns sessions in supabase mode, and local tokens are stateless.
 
 ## Data Flow
 
 ```
 frontend (separate project/process)
-  -> HTTP request carrying Authorization: Bearer <supabase access_token>
+  -> HTTP request carrying Authorization: Bearer <supabase access_token | local token>
   -> Axum app                                              (src/app.rs)
-     -> CORS check (FRONTEND_ORIGIN allowlist)
-     -> [protected routes only] auth extractor              (verifies the Supabase JWT: signature
-                                                              via SUPABASE_JWT_SECRET, exp, aud)
+     -> CORS check (FRONTEND_ORIGIN allowlist; methods GET, POST; headers authorization,
+        content-type)
+     -> [protected routes only] AuthUser extractor          (supabase mode: signature via
+                                                              SUPABASE_JWT_SECRET, exp, aud =
+                                                              authenticated; local mode: signature
+                                                              via LOCAL_AUTH_SECRET, exp with zero
+                                                              leeway, iss, aud = harness-spectator-local)
      -> route handler
+        - GET /api/auth/mode (public): {mode: "supabase" | "local"}
+        - POST /api/auth/login (public, local mode only; 404 in supabase mode):
+          {email, password} -> {accessToken, expiresAt}; 401 on bad credentials, 400 on a
+          malformed body
         - GET /api/harness/projects: every non-deleted project, ordered by slug, as
           [{slug, description, counts: {total, done, inProgress, blocked}}]
         - GET /api/harness/projects/{slug}/state: {project, features, openSession,
@@ -128,19 +160,22 @@ reader uses, applied by `#[sqlx::test]`; it is never run against the mirror.
 The target database is not necessarily any particular project's own mirror — it is configured via
 the `DATABASE_URL` env var, so the same backend can point at any sibling harness project's mirrored
 Postgres schema. `SUPABASE_JWT_SECRET` must match the Supabase project the frontend authenticates
-against, and `FRONTEND_ORIGIN` must match where that frontend is served from.
+against (supabase mode), and `FRONTEND_ORIGIN` must match where that frontend is served from.
 
 ## What NOT to do
 
 - Do not add write/mutation endpoints (e.g. no route that calls `scripts/harness.sh
   claim`/`log-out`/etc.) — this stack is a read-only viewer.
-- Do not implement login/logout/session-issuing routes — Supabase Auth owns the entire
-  credential/session lifecycle; this backend only verifies tokens it did not issue.
+- Do not implement login/logout/refresh/session-issuing routes, except `POST /api/auth/login` in
+  local mode. In supabase mode Supabase Auth owns the entire credential/session lifecycle and this
+  backend only verifies tokens it did not issue; in local mode the backend issues stateless tokens
+  and never stores sessions.
 - Do not merge this backend into the frontend's framework/process — they must remain two
   independently startable processes (`cargo run` here, `npm start` there).
 - Do not use any Postgres extension or feature that is unavailable on Supabase-hosted Postgres
   (e.g. filesystem-backed extensions, superuser-only features) — the schema must be
   Supabase-portable from the first migration file.
-- Do not commit `SUPABASE_JWT_SECRET`, `DATABASE_URL`, or any other secret — they are supplied via
+- Do not commit `SUPABASE_JWT_SECRET`, `LOCAL_AUTH_SECRET`, `LOCAL_AUTH_USERS`, `DATABASE_URL`, or
+  any other secret — they are supplied via
   untracked `.env` files (see `.env.example`), consistent with `harness.db` already being gitignored
   for similar reasons.
