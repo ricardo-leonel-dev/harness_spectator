@@ -70,9 +70,9 @@ const STATUS_TRACK: Record<string, StatusTrack> = {
         <span
           class="relative inline-flex h-1.75 w-1.75 shrink-0"
           data-track-node="filled"
-          [attr.data-beacon]="track.pulse ? 'lifecycle' : null"
+          [attr.data-beacon]="track.pulse && pulse ? 'lifecycle' : null"
         >
-          @if (track.pulse) {
+          @if (track.pulse && pulse) {
             <span
               class="absolute inset-0 animate-beacon-fast rounded-full motion-reduce:hidden motion-reduce:animate-none"
               [class]="track.node"
@@ -100,6 +100,7 @@ const STATUS_TRACK: Record<string, StatusTrack> = {
 })
 export class LifecycleTrackComponent {
   @Input({ required: true }) status!: string;
+  @Input() pulse = true;
 
   get track(): StatusTrack {
     return (

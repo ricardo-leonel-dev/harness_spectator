@@ -12,6 +12,7 @@ import { SUPABASE_CLIENT, Supabase } from '../auth/supabase-client';
 import { LoginPageComponent } from '../auth/login-page.component';
 import { authInterceptor } from '../core/auth.interceptor';
 import { environment } from '../../environments/environment';
+import { FeatureLogResponse } from '../core/harness-api.service';
 
 interface HarnessStatePayload {
   project: { slug: string; description: string };
@@ -55,6 +56,43 @@ const MODE_URL = `${environment.apiBaseUrl}/api/auth/mode`;
 
 function stateUrl(slug: string): string {
   return `${environment.apiBaseUrl}/api/harness/projects/${slug}/state`;
+}
+
+function logUrl(slug: string, name: string): string {
+  return `${environment.apiBaseUrl}/api/harness/projects/${slug}/features/${name}/log`;
+}
+
+function featureLog(
+  name: string,
+  overrides: Partial<FeatureLogResponse['feature']> = {},
+): FeatureLogResponse {
+  return {
+    feature: {
+      featureNumber: 2,
+      name,
+      title: 'Second',
+      status: 'done',
+      sdd: false,
+      description: null,
+      acceptance: [],
+      ...overrides,
+    },
+    sessions: [
+      {
+        localId: 4,
+        agent: 'implementer',
+        startedAt: '2026-08-27T00:00:00Z',
+        closedAt: '2026-08-27T01:00:00Z',
+        pausedAt: null,
+        plan: ['T1'],
+        nextStep: null,
+        changes: ['src/a.ts'],
+        verification: 'green',
+        closure: 'done',
+        entries: [{ entry: 'did T1', createdAt: '2026-08-27T00:30:00Z' }],
+      },
+    ],
+  };
 }
 
 const TEST_ROUTES: Routes = routes.map((r) => {
@@ -855,6 +893,205 @@ describe('DashboardPageComponent', () => {
     }));
   });
 
+  describe('process log', () => {
+    function openWithFeature(feature: string | null): RouterTestingHarness {
+      const harness = boot(`/projects/demo-project${feature ? `?feature=${feature}` : ''}`);
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+      settle(harness);
+      return harness;
+    }
+
+    function row(host: HTMLElement, name: string): HTMLElement {
+      return Array.from(host.querySelectorAll<HTMLElement>('[data-feature-row]')).find(
+        (r) => r.querySelector('[data-feature-name]')?.textContent?.trim() === name,
+      ) as HTMLElement;
+    }
+
+    function card(host: HTMLElement): HTMLElement {
+      return host.querySelector('app-process-log-card') as HTMLElement;
+    }
+
+    function stubMedia(wide: boolean, reduce: boolean): void {
+      spyOn(window, 'matchMedia').and.callFake(
+        (query: string) =>
+          ({ matches: query.includes('reduce') ? reduce : wide, media: query }) as MediaQueryList,
+      );
+    }
+
+    it('selecting a row writes ?feature= with replaceUrl, and activating it again clears it', fakeAsync(() => {
+      stubMedia(true, false);
+      const harness = openWithFeature(null);
+      const host = harness.routeNativeElement as HTMLElement;
+      const router = TestBed.inject(Router);
+      const navigate = spyOn(router, 'navigate').and.callThrough();
+
+      row(host, 'second').click();
+      settle(harness);
+      expect(navigate).toHaveBeenCalledWith(['/projects', 'demo-project'], {
+        queryParams: { feature: 'second' },
+        replaceUrl: true,
+      });
+      expect(router.url).toBe('/projects/demo-project?feature=second');
+      httpTesting.expectOne(logUrl('demo-project', 'second')).flush(featureLog('second'));
+      settle(harness);
+      expect(row(host, 'second').getAttribute('aria-pressed')).toBe('true');
+
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true });
+      row(host, 'second').dispatchEvent(enter);
+      settle(harness);
+      expect(navigate).toHaveBeenCalledWith(['/projects', 'demo-project'], {
+        queryParams: {},
+        replaceUrl: true,
+      });
+      expect(router.url).toBe('/projects/demo-project');
+      expect(row(host, 'second').getAttribute('aria-pressed')).toBe('false');
+      expect(card(host).textContent).toContain('Select a feature to see its process log.');
+    }));
+
+    it('restores the selection from the URL on load and requests the log once', fakeAsync(() => {
+      const harness = openWithFeature('second');
+      const host = harness.routeNativeElement as HTMLElement;
+      const requests = httpTesting.match(logUrl('demo-project', 'second'));
+      expect(requests.length).toBe(1);
+      expect(requests[0].request.headers.get('Authorization')).toBe('Bearer real-access-token');
+      expect(card(host).querySelector('[role="status"]')?.textContent).toContain('second');
+      requests[0].flush(featureLog('second'));
+      settle(harness);
+
+      expect(row(host, 'second').getAttribute('aria-pressed')).toBe('true');
+      expect(row(host, 'second').classList).toContain('border-signal');
+      expect(row(host, 'first').getAttribute('aria-pressed')).toBe('false');
+      expect(card(host).querySelector('[data-log-feature-name]')?.textContent?.trim()).toBe(
+        'second',
+      );
+      expect(card(host).textContent).toContain('did T1');
+      httpTesting.expectNone(logUrl('demo-project', 'second'));
+    }));
+
+    it('does not refetch state when only the feature changes, and cancels the previous log request', fakeAsync(() => {
+      stubMedia(true, false);
+      const harness = openWithFeature('first');
+      const host = harness.routeNativeElement as HTMLElement;
+      const pending = httpTesting.expectOne(logUrl('demo-project', 'first'));
+
+      row(host, 'second').click();
+      settle(harness);
+
+      expect(pending.cancelled).toBeTrue();
+      httpTesting.expectNone(stateUrl('demo-project'));
+      httpTesting.expectOne(logUrl('demo-project', 'second')).flush(featureLog('second'));
+      settle(harness);
+      expect(card(host).querySelector('[data-log-feature-name]')?.textContent?.trim()).toBe(
+        'second',
+      );
+      expect(host.querySelectorAll('[data-feature-row]').length).toBe(2);
+    }));
+
+    it('switching project drops the feature query param and cancels the pending log request', fakeAsync(() => {
+      const harness = openWithFeature('first');
+      const host = harness.routeNativeElement as HTMLElement;
+      const pending = httpTesting.expectOne(logUrl('demo-project', 'first'));
+
+      trigger(host).click();
+      settle(harness);
+      (overlay().querySelector('[data-project-option="other-project"]') as HTMLElement).click();
+      settle(harness);
+
+      expect(TestBed.inject(Router).url).toBe('/projects/other-project');
+      expect(pending.cancelled).toBeTrue();
+      httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
+      settle(harness);
+      httpTesting.expectNone((req) => req.url.includes('/features/'));
+      expect(card(host).textContent).toContain('Select a feature to see its process log.');
+      expect(
+        Array.from(host.querySelectorAll('[data-feature-row]')).map((r) =>
+          r.getAttribute('aria-pressed'),
+        ),
+      ).toEqual(['false', 'false']);
+    }));
+
+    it('places the process log card after the blocked card in the aside', fakeAsync(() => {
+      const host = renderWith(SEEDED_STATE);
+      const aside = host.querySelector('aside') as HTMLElement;
+      const last = aside.lastElementChild as HTMLElement;
+      expect(last.tagName.toLowerCase()).toBe('app-process-log-card');
+      expect(last.previousElementSibling?.tagName.toLowerCase()).toBe('app-blocked-features-card');
+      const title = last.querySelector('h2') as HTMLElement;
+      expect(title.textContent?.trim()).toBe('Process log');
+      expect(title.classList).toContain('font-mono');
+      expect(title.classList).toContain('text-label');
+      expect(title.classList).toContain('uppercase');
+      expect(getComputedStyle(title).textTransform).toBe('uppercase');
+      expect(getComputedStyle(title).fontFamily).toContain('IBM Plex Mono');
+    }));
+
+    it('shows the not-found message for a 404 and [ERR] for a 401 inside the card', fakeAsync(() => {
+      stubMedia(true, false);
+      const harness = openWithFeature('ghost');
+      const host = harness.routeNativeElement as HTMLElement;
+      httpTesting
+        .expectOne(logUrl('demo-project', 'ghost'))
+        .flush({ error: 'not found' }, { status: 404, statusText: 'Not Found' });
+      settle(harness);
+
+      let alert = card(host).querySelector('[role="alert"]') as HTMLElement;
+      expect(alert.textContent).toContain('[404]');
+      expect(alert.textContent?.replace(/\s+/g, ' ')).toContain(
+        'No feature named ghost in demo-project.',
+      );
+      expect(host.querySelector('[data-not-found]')).toBeNull();
+
+      row(host, 'first').click();
+      settle(harness);
+      httpTesting
+        .expectOne(logUrl('demo-project', 'first'))
+        .flush({ error: 'unauthorized' }, { status: 401, statusText: 'Unauthorized' });
+      settle(harness);
+
+      alert = card(host).querySelector('[role="alert"]') as HTMLElement;
+      expect(alert.textContent).toContain('[ERR]');
+      expect(alert.textContent).toContain('401 Unauthorized');
+      expect(alert.textContent).not.toContain('[404]');
+      expect(TestBed.inject(Router).url).toBe('/projects/demo-project?feature=first');
+    }));
+
+    it('scrolls the card into view on narrow viewports, honouring reduced motion', fakeAsync(() => {
+      const harness = openWithFeature(null);
+      const host = harness.routeNativeElement as HTMLElement;
+      const scroll = spyOn(card(host), 'scrollIntoView');
+      const media = spyOn(window, 'matchMedia');
+      const useMedia = (wide: boolean, reduce: boolean): void => {
+        media.and.callFake(
+          (query: string) =>
+            ({ matches: query.includes('reduce') ? reduce : wide, media: query }) as MediaQueryList,
+        );
+      };
+
+      useMedia(true, false);
+      row(host, 'second').click();
+      settle(harness);
+      httpTesting.expectOne(logUrl('demo-project', 'second')).flush(featureLog('second'));
+      settle(harness);
+      expect(scroll).not.toHaveBeenCalled();
+
+      useMedia(false, false);
+      row(host, 'first').click();
+      settle(harness);
+      httpTesting.expectOne(logUrl('demo-project', 'first')).flush(featureLog('first'));
+      settle(harness);
+      expect(scroll).toHaveBeenCalledOnceWith({ behavior: 'smooth', block: 'start' });
+
+      scroll.calls.reset();
+      useMedia(false, true);
+      row(host, 'second').click();
+      settle(harness);
+      httpTesting.expectOne(logUrl('demo-project', 'second')).flush(featureLog('second'));
+      settle(harness);
+      expect(scroll).toHaveBeenCalledOnceWith({ behavior: 'auto', block: 'start' });
+    }));
+  });
+
   describe('phone width', () => {
     function mountAt360(nodes: HTMLElement[]): { doc: Document; remove: () => void } {
       const css = Array.from(document.styleSheets)
@@ -930,6 +1167,60 @@ describe('DashboardPageComponent', () => {
           expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
           const track = row.querySelector('app-lifecycle-track') as HTMLElement;
           expect(track.getBoundingClientRect().right).toBeLessThanOrEqual(360);
+        }
+      } finally {
+        remove();
+      }
+    }));
+    it('renders a populated process log at 360px with no horizontal scroll', fakeAsync(() => {
+      const name = 'an_extremely_long_feature_identifier_name';
+      const longToken = 'unbroken-token-without-any-spaces-'.repeat(6);
+      const harness = boot(`/projects/demo-project?feature=${name}`);
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(stateUrl('demo-project')).flush({
+        ...SEEDED_STATE,
+        features: [
+          {
+            featureNumber: 12,
+            name,
+            title: 'A long feature title that keeps going '.repeat(5),
+            status: 'in_progress',
+            sdd: true,
+          },
+        ],
+      });
+      const base = featureLog(name, {
+        featureNumber: 12,
+        title: longToken,
+        status: 'in_progress',
+      });
+      httpTesting.expectOne(logUrl('demo-project', name)).flush({
+        ...base,
+        sessions: [
+          {
+            ...base.sessions[0],
+            agent: longToken,
+            plan: [longToken],
+            changes: [`src/${longToken}/file.ts`],
+            verification: longToken,
+            closure: longToken,
+            entries: [{ entry: longToken, createdAt: '2026-08-27T00:30:00+00:00' }],
+          },
+        ],
+      });
+      settle(harness);
+      const host = harness.routeNativeElement as HTMLElement;
+      expect(host.querySelector('app-process-log-card [data-log-session]')).toBeTruthy();
+      const { doc, remove } = mountAt360([host]);
+      try {
+        expect(doc.documentElement.clientWidth).toBe(360);
+        expect(doc.documentElement.scrollWidth).toBeLessThanOrEqual(360);
+        const cardEl = doc.querySelector('app-process-log-card') as HTMLElement;
+        expect(cardEl.getBoundingClientRect().right).toBeLessThanOrEqual(360);
+        for (const el of Array.from(cardEl.querySelectorAll<HTMLElement>('*'))) {
+          expect(el.getBoundingClientRect().right)
+            .withContext(el.outerHTML.slice(0, 80))
+            .toBeLessThanOrEqual(360);
         }
       } finally {
         remove();

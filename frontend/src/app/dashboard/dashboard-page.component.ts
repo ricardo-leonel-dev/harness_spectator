@@ -1,6 +1,7 @@
 import {
   Component,
   DestroyRef,
+  ElementRef,
   OnInit,
   ViewChild,
   computed,
@@ -10,6 +11,7 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
+import { DOCUMENT } from '@angular/common';
 import { ActivatedRoute, NavigationEnd, Router } from '@angular/router';
 import {
   EMPTY,
@@ -33,6 +35,7 @@ import { BlockedFeaturesCardComponent } from './blocked-features-card.component'
 import { FeatureRowVm, FeaturesTableComponent } from './features-table.component';
 import { OpenSessionCardComponent, OpenSessionVm } from './open-session-card.component';
 import { BlockedFeatureVm } from './blocked-features-card.component';
+import { ProcessLogCardComponent, ProcessLogState } from './process-log-card.component';
 import { ProjectSelectorComponent } from './project-selector.component';
 
 export const LAST_PROJECT_STORAGE_KEY = 'harness.lastProject';
@@ -41,6 +44,11 @@ type StateResult =
   | { kind: 'ok'; slug: string; state: HarnessStateResponse }
   | { kind: 'error'; slug: string; error: HttpErrorResponse };
 
+interface LogTarget {
+  slug: string | null;
+  feature: string | null;
+}
+
 @Component({
   selector: 'app-dashboard-page',
   imports: [
@@ -48,6 +56,7 @@ type StateResult =
     OpenSessionCardComponent,
     BlockedFeaturesCardComponent,
     ProjectSelectorComponent,
+    ProcessLogCardComponent,
     LucideAngularModule,
   ],
   providers: [LucideAngularModule.pick({ LogOut }).providers ?? []],
@@ -187,7 +196,11 @@ type StateResult =
               <span class="font-mono text-text">./init.sh</span> in a harness project to sync it.
             </p>
           } @else if (showsProject()) {
-            <app-features-table [features]="features() ?? []" />
+            <app-features-table
+              [features]="features() ?? []"
+              [selected]="selectedFeature()"
+              (toggled)="onFeatureToggled($event)"
+            />
           }
         </section>
 
@@ -195,6 +208,7 @@ type StateResult =
           <aside class="flex min-w-0 flex-col gap-3.5">
             <app-open-session-card [session]="session()" />
             <app-blocked-features-card [features]="blocked()" />
+            <app-process-log-card [state]="processLog()" />
           </aside>
         }
       </main>
@@ -226,8 +240,10 @@ export class DashboardPageComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly document = inject(DOCUMENT);
 
   @ViewChild(ProjectSelectorComponent, { static: true }) selector!: ProjectSelectorComponent;
+  @ViewChild(ProcessLogCardComponent, { read: ElementRef }) card?: ElementRef<HTMLElement>;
 
   readonly projects = signal<ProjectSummary[] | null>(null);
   readonly projectsError = signal<string | null>(null);
@@ -239,6 +255,8 @@ export class DashboardPageComponent implements OnInit {
   readonly notFound = signal<string | null>(null);
   readonly loadError = signal<string | null>(null);
   readonly loggingOut = signal(false);
+  readonly selectedFeature = signal<string | null>(null);
+  readonly processLog = signal<ProcessLogState>({ kind: 'idle' });
 
   readonly activeAgents = computed(() => (this.session() ? 1 : 0));
   readonly loading = computed(
@@ -294,6 +312,39 @@ export class DashboardPageComponent implements OnInit {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((result) => this.applyState(result));
+
+    this.router.events
+      .pipe(
+        filter((e) => e instanceof NavigationEnd),
+        startWith(null),
+        map((): LogTarget => ({
+          slug: this.route.snapshot.firstChild?.paramMap.get('slug') ?? null,
+          feature: this.route.snapshot.firstChild?.queryParamMap.get('feature') || null,
+        })),
+        distinctUntilChanged((a, b) => a.slug === b.slug && a.feature === b.feature),
+        switchMap(({ slug, feature }) => {
+          this.selectedFeature.set(slug ? feature : null);
+          if (!slug || !feature) return of<ProcessLogState>({ kind: 'idle' });
+          this.processLog.set({ kind: 'loading', name: feature });
+          return this.api.getFeatureLog(slug, feature).pipe(
+            map((log): ProcessLogState => ({ kind: 'ok', log })),
+            catchError((error: HttpErrorResponse) => of(toLogError(error, slug, feature))),
+          );
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((state) => this.processLog.set(state));
+  }
+
+  onFeatureToggled(name: string): void {
+    const slug = this.slug();
+    if (!slug) return;
+    const next = this.selectedFeature() === name ? null : name;
+    void this.router.navigate(['/projects', slug], {
+      queryParams: next ? { feature: next } : {},
+      replaceUrl: true,
+    });
+    if (!this.matches('(min-width: 1024px)', true)) this.scrollCardIntoView();
   }
 
   openProject(slug: string): void {
@@ -308,6 +359,18 @@ export class DashboardPageComponent implements OnInit {
     } finally {
       this.loggingOut.set(false);
     }
+  }
+
+  private matches(query: string, fallback: boolean): boolean {
+    return this.document.defaultView?.matchMedia(query).matches ?? fallback;
+  }
+
+  private scrollCardIntoView(): void {
+    const reduce = this.matches('(prefers-reduced-motion: reduce)', false);
+    this.card?.nativeElement.scrollIntoView({
+      behavior: reduce ? 'auto' : 'smooth',
+      block: 'start',
+    });
   }
 
   private resetState(slug: string | null): void {
@@ -343,6 +406,11 @@ export class DashboardPageComponent implements OnInit {
     const target = list.some((p) => p.slug === remembered) ? remembered : list[0].slug;
     void this.router.navigate(['/projects', target], { replaceUrl: true });
   }
+}
+
+function toLogError(error: HttpErrorResponse, slug: string, name: string): ProcessLogState {
+  if (error.status === 404) return { kind: 'not-found', name, slug };
+  return { kind: 'error', message: error.message || 'Failed to load the process log.' };
 }
 
 function rememberProject(slug: string): void {
