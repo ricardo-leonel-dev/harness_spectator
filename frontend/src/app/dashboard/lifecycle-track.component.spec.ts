@@ -153,4 +153,17 @@ describe('LifecycleTrackComponent', () => {
     expect(label.textContent?.trim()).toBe('archived');
     expect(render('on_hold').label.textContent?.trim()).toBe('on hold');
   });
+
+  it('drops the in_progress beacon when pulse is false, keeping the filled signal node', () => {
+    const fixture = TestBed.createComponent(LifecycleTrackComponent);
+    fixture.componentRef.setInput('status', 'in_progress');
+    fixture.componentRef.setInput('pulse', false);
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('[data-beacon]')).toBeNull();
+    expect(host.querySelector('[data-beacon-ping]')).toBeNull();
+    expect(host.querySelector('[data-track-node]')?.getAttribute('data-track-node')).toBe('filled');
+    expect(host.querySelector('[data-track-label]')?.textContent?.trim()).toBe('in progress');
+  });
 });

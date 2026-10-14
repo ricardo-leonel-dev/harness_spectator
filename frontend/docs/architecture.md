@@ -34,7 +34,9 @@ the filesystem directly.
   (`{ accessToken, email, expiresAt }`) in both modes.
 - **Data:** this frontend never reaches a database. All harness state arrives as JSON from the
   backend: the project list from `GET /api/harness/projects`, and one project's state from
-  `GET /api/harness/projects/{slug}/state` (rendered at the `/projects/:slug` route).
+  `GET /api/harness/projects/{slug}/state` (rendered at the `/projects/:slug` route), and one
+  feature's process log from `GET /api/harness/projects/{slug}/features/{name}/log` (rendered in
+  the Process log card when `?feature=<name>` selects a row; feature 7: `feature_process_log_panel`).
 
 ### Why Angular over React/Vue (discarded alternative)
 
@@ -65,8 +67,9 @@ Supabase is already the target data platform.
    - `src/app/auth/` — the Supabase client wrapper, the login page, the `AuthService`
      (Angular signal-based session state), and the functional `authGuard` that gates the
      harness-state dashboard behind a valid Supabase session.
-   - `src/app/dashboard/` — components that render harness state (features table, open
-     session card, blocked features card) fetched via `src/app/core/`.
+   - `src/app/dashboard/` — components that render harness state (features table with
+     selectable rows, open session card, blocked features card, process log card) fetched via
+     `src/app/core/`.
    - `src/app/core/` — the `HarnessApiService` (the only place that calls Angular's
      `HttpClient` against the backend) and the `authInterceptor` that attaches the Supabase access
      token as `Authorization: Bearer <token>` to outgoing requests.
@@ -143,6 +146,7 @@ browser
      Authorization: Bearer <accessToken>                  (src/app/core/, either mode)
   -> backend GET /api/harness/projects                    (separate project/process)
           GET /api/harness/projects/{slug}/state
+          GET /api/harness/projects/{slug}/features/{name}/log
   <- JSON response
   -> HarnessApiService
   -> Angular components (src/app/dashboard/)
