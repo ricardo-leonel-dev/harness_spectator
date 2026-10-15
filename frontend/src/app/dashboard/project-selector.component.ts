@@ -63,11 +63,13 @@ function phonePositions(originLeft: number): ConnectedPosition[] {
       aria-haspopup="listbox"
       [attr.aria-expanded]="isOpen()"
       [attr.aria-controls]="isOpen() ? listboxId : null"
-      [attr.aria-label]="'Switch project, current: ' + (current ?? 'none')"
+      [attr.aria-label]="'Switch project, current: ' + (current ?? 'all projects')"
       class="-mx-1.5 flex min-w-0 max-w-[11rem] items-center gap-1.5 rounded border border-transparent px-1.5 py-1 text-muted transition-colors hover:border-line hover:text-text focus:outline-none focus-visible:border-signal aria-expanded:border-line aria-expanded:bg-edge aria-expanded:text-text motion-reduce:transition-none sm:max-w-xs"
       data-selector-trigger
     >
-      <span class="truncate font-mono text-xs" data-project-slug>{{ current ?? '…' }}</span>
+      <span class="truncate font-mono text-xs" data-project-slug>{{
+        current ?? 'all projects'
+      }}</span>
       <lucide-icon name="chevrons-up-down" class="block h-3 w-3 shrink-0 text-faint" />
     </button>
 

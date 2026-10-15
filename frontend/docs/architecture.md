@@ -33,7 +33,8 @@ the filesystem directly.
   guard, interceptor and dashboard read one provider-neutral `AuthSession`
   (`{ accessToken, email, expiresAt }`) in both modes.
 - **Data:** this frontend never reaches a database. All harness state arrives as JSON from the
-  backend: the project list from `GET /api/harness/projects`, and one project's state from
+  backend: the project list from `GET /api/harness/projects`, the cross-project overview from
+  `GET /api/harness/dashboard` (rendered at `/`), one project's state from
   `GET /api/harness/projects/{slug}/state` (rendered at the `/projects/:slug` route), and one
   feature's process log from `GET /api/harness/projects/{slug}/features/{name}/log` (rendered in
   the Process log card when `?feature=<name>` selects a row; feature 7: `feature_process_log_panel`).
@@ -68,16 +69,29 @@ Supabase is already the target data platform.
      (Angular signal-based session state), and the functional `authGuard` that gates the
      harness-state dashboard behind a valid Supabase session.
    - `src/app/dashboard/` — components that render harness state (features table with
-     selectable rows, open session card, blocked features card, process log card) fetched via
-     `src/app/core/`.
+     selectable rows, open session card, blocked features card, process log card, the
+     cross-project progress overview at `/`) fetched via `src/app/core/`.
    - `src/app/core/` — the `HarnessApiService` (the only place that calls Angular's
      `HttpClient` against the backend) and the `authInterceptor` that attaches the Supabase access
-     token as `Authorization: Bearer <token>` to outgoing requests.
+     token as `Authorization: Bearer <token>` to outgoing requests and signs the user out
+     app-wide on any non-login 401 (see "401 rule" under Principles).
    Don't let implementers introduce additional top-level layers without updating this file first.
+
+   **401 rule.** `authGuard` only sees the local session before routing, so an expired or revoked
+   token surfaces as a 401 on an API call. To keep every API path consistent, the interceptor owns
+   the app-wide response: when an HTTP request whose URL is **not** `POST /api/auth/login` fails
+   with status 401, the interceptor first captures the current router URL as `returnUrl`, then
+   asks `AuthService.endSession()` to clear the local session and (when the failure was not on
+   `/login`) navigates to `/login` with `returnUrl` as a query parameter. The original
+   `HttpErrorResponse` is always re-emitted to the caller so each component still owns its error
+   rendering (e.g. the progress overview suppresses its `[ERR]` banner on 401, since the
+   interceptor is already redirecting). The local login 401 is exempt because it means "wrong
+   password", which the login form renders as a `[ERR]` inline message itself.
 2. **Dependencies.** Approved allowlist, not "anything goes":
    - Runtime: `@angular/core`, `@angular/common`, `@angular/router`, `@angular/forms`,
-     `@angular/common/http`, `@angular/cdk`, `@supabase/supabase-js`, `rxjs`, `lucide-angular`,
-     `@fontsource/ibm-plex-sans`, `@fontsource/ibm-plex-mono`.
+     `@angular/common/http`, `@angular/animations`, `@angular/cdk`, `@supabase/supabase-js`,
+     `@swimlane/ngx-charts`, `rxjs`, `lucide-angular`, `@fontsource/ibm-plex-sans`,
+     `@fontsource/ibm-plex-mono`.
    - Dev: `@angular/cli`, `@angular-devkit/build-angular`, `typescript`, `eslint` +
      `typescript-eslint` + `angular-eslint`, `prettier`, `karma`, `karma-chrome-launcher`,
      `jasmine-core`, `@types/jasmine`, `tailwindcss`, `postcss`, `autoprefixer`.
@@ -86,6 +100,10 @@ Supabase is already the target data platform.
      is the one exception, used only for its unstyled behavior primitives (overlay positioning,
      focus-trap, a11y, drag-drop), never for a themed/pre-styled component. Every visible component
      is hand-built and styled with Tailwind utility classes (see `docs/conventions.md`).
+     `@swimlane/ngx-charts` is the one library used for chart rendering inside the progress
+     overview (gauge, doughnut, stacked horizontal bars) — its modules are imported only by that
+     overview, with chart data passed as ordinary typed objects and chart chrome restyled via
+     Tailwind arbitrary variants and one tooltip block in `src/styles.css`.
    - **Offline-first.** No dependency, asset, `<link>`, or `<script>` may reach an external CDN at
      runtime — no Google Fonts, no cdnjs/unpkg/jsdelivr, no icon-font service. This app must render
      correctly with zero internet access (aside from its own Supabase Auth / backend API calls,
@@ -145,11 +163,14 @@ browser
   -> HttpClient request, authInterceptor adds
      Authorization: Bearer <accessToken>                  (src/app/core/, either mode)
   -> backend GET /api/harness/projects                    (separate project/process)
+          GET /api/harness/dashboard                       (cross-project overview at /)
           GET /api/harness/projects/{slug}/state
           GET /api/harness/projects/{slug}/features/{name}/log
   <- JSON response
   -> HarnessApiService
   -> Angular components (src/app/dashboard/)
+  <- non-login 401: authInterceptor ends the session and navigates
+                    to /login?returnUrl=<current router URL>
 ```
 
 The Supabase project is configured via `SUPABASE_URL`/`SUPABASE_ANON_KEY`; the backend's base URL

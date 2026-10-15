@@ -89,6 +89,20 @@ export class AuthService {
     await router.navigate(['/login']);
   }
 
+  async endSession(): Promise<void> {
+    if (this._mode() === 'supabase') {
+      try {
+        await this.supabase().auth.signOut({ scope: 'local' });
+      } catch {
+        // The interceptor relies on this clearing the local signal even when
+        // Supabase rejects; the eventual navigation is its own concern.
+      }
+      this._session.set(null);
+      return;
+    }
+    this.clearLocalSession();
+  }
+
   private async resolveMode(): Promise<AuthMode> {
     try {
       const body = await firstValueFrom(

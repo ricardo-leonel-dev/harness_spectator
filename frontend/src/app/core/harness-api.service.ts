@@ -71,6 +71,20 @@ export interface LocalLoginResponse {
   expiresAt: number;
 }
 
+export interface StatusCounts {
+  pending: number;
+  specDrafting: number;
+  specReady: number;
+  inProgress: number;
+  blocked: number;
+  done: number;
+}
+
+export interface DashboardResponse {
+  overall: { done: number; total: number; percentage: number; byStatus: StatusCounts };
+  topProjects: Array<{ slug: string; done: number; total: number; percentage: number }>;
+}
+
 @Injectable({ providedIn: 'root' })
 export class HarnessApiService {
   private readonly http = inject(HttpClient);
@@ -89,6 +103,10 @@ export class HarnessApiService {
     return this.http.get<FeatureLogResponse>(
       `${environment.apiBaseUrl}/api/harness/projects/${encodeURIComponent(slug)}/features/${encodeURIComponent(name)}/log`,
     );
+  }
+
+  getDashboard(): Observable<DashboardResponse> {
+    return this.http.get<DashboardResponse>(`${environment.apiBaseUrl}/api/harness/dashboard`);
   }
 
   getAuthMode(): Observable<AuthModeResponse> {

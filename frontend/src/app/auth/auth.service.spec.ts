@@ -347,6 +347,60 @@ describe('AuthService', () => {
       expect(signOutCalls).toBe(1);
       expect(router.url).toBe('/login');
     });
+  });
+
+  describe('endSession', () => {
+    it('signs out via Supabase with local scope and clears the session, without navigating', async () => {
+      storedSupabaseSession = supabaseSession('sb@example.com');
+      const auth = await initWith('supabase');
+      const router = TestBed.inject(Router);
+      const navigateSpy = spyOn(router, 'navigate').and.callThrough();
+      void router.navigateByUrl('/projects/demo');
+      const urlBefore = router.url;
+
+      let signOutOpts: { scope?: string } | undefined;
+      const fakeSupabase = TestBed.inject(SUPABASE_CLIENT) as unknown as {
+        auth: { signOut: (opts?: { scope?: string }) => Promise<{ error: null }> };
+      };
+      const original = fakeSupabase.auth.signOut;
+      fakeSupabase.auth.signOut = (opts?: { scope?: string }) => {
+        signOutOpts = opts;
+        return original.call(fakeSupabase.auth, opts);
+      };
+
+      await auth.endSession();
+      expect(signOutCalls).toBe(1);
+      expect(signOutOpts?.scope).toBe('local');
+      expect(auth.session()).toBeNull();
+      expect(navigateSpy).not.toHaveBeenCalled();
+      expect(router.url).toBe(urlBefore);
+
+      fakeSupabase.auth.signOut = original;
+    });
+
+    it('clears the local session without Supabase and without navigating in local mode', fakeAsync(() => {
+      const auth = TestBed.inject(AuthService);
+      const router = TestBed.inject(Router);
+      const navigateSpy = spyOn(router, 'navigate').and.callThrough();
+      void auth.init();
+      httpTesting.expectOne(MODE_URL).flush({ mode: 'local' });
+      flushMicrotasks();
+
+      void auth.login('me@example.com', 'pw');
+      httpTesting.expectOne(LOGIN_URL).flush({ accessToken: 't', expiresAt: nowSeconds() + 60 });
+      flushMicrotasks();
+      expect(auth.session()).not.toBeNull();
+
+      void auth.endSession();
+      tick();
+      flushMicrotasks();
+
+      expect(auth.session()).toBeNull();
+      expect(localStorage.getItem(LOCAL_SESSION_STORAGE_KEY)).toBeNull();
+      expect(navigateSpy).not.toHaveBeenCalled();
+      expect(signOutCalls).toBe(0);
+      expect(factoryCalls).toBe(0);
+    }));
 
     it('clears the local session with no Supabase or backend call in local mode (R5, R17)', fakeAsync(() => {
       const auth = TestBed.inject(AuthService);
