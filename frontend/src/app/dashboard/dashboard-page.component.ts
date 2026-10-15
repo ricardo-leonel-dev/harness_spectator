@@ -1,4 +1,5 @@
 import {
+  ChangeDetectionStrategy,
   Component,
   DestroyRef,
   ElementRef,
@@ -7,12 +8,11 @@ import {
   computed,
   inject,
   signal,
-  ChangeDetectionStrategy,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
-import { DOCUMENT } from '@angular/common';
-import { ActivatedRoute, NavigationEnd, Router } from '@angular/router';
+import { DOCUMENT, NgClass } from '@angular/common';
+import { ActivatedRoute, NavigationEnd, Router, RouterLink } from '@angular/router';
 import {
   EMPTY,
   catchError,
@@ -36,9 +36,8 @@ import { FeatureRowVm, FeaturesTableComponent } from './features-table.component
 import { OpenSessionCardComponent, OpenSessionVm } from './open-session-card.component';
 import { BlockedFeatureVm } from './blocked-features-card.component';
 import { ProcessLogCardComponent, ProcessLogState } from './process-log-card.component';
+import { ProgressOverviewComponent } from './progress-overview.component';
 import { ProjectSelectorComponent } from './project-selector.component';
-
-export const LAST_PROJECT_STORAGE_KEY = 'harness.lastProject';
 
 type StateResult =
   | { kind: 'ok'; slug: string; state: HarnessStateResponse }
@@ -57,6 +56,9 @@ interface LogTarget {
     BlockedFeaturesCardComponent,
     ProjectSelectorComponent,
     ProcessLogCardComponent,
+    ProgressOverviewComponent,
+    RouterLink,
+    NgClass,
     LucideAngularModule,
   ],
   providers: [LucideAngularModule.pick({ LogOut }).providers ?? []],
@@ -65,7 +67,12 @@ interface LogTarget {
       <header
         class="sticky top-0 z-10 flex items-center gap-x-2.5 border-b border-line bg-panel px-4 py-2.75 sm:gap-x-3.5 sm:px-5"
       >
-        <div class="flex shrink-0 items-center gap-2.25" data-wordmark>
+        <a
+          routerLink="/"
+          aria-label="Overview"
+          class="flex shrink-0 items-center gap-2.25 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-signal hover:[&_span.text-bright]:text-bright"
+          data-wordmark
+        >
           <span class="relative inline-flex h-2.25 w-2.25" data-beacon="wordmark">
             <span
               class="absolute inset-0 animate-beacon rounded-full bg-signal motion-reduce:hidden motion-reduce:animate-none"
@@ -76,7 +83,7 @@ interface LogTarget {
           <span class="font-mono text-xs font-semibold uppercase tracking-[0.1em] text-bright">
             Harness
           </span>
-        </div>
+        </a>
         <span class="text-line-strong" aria-hidden="true">·</span>
         <app-project-selector
           class="flex min-w-0"
@@ -134,10 +141,14 @@ interface LogTarget {
         </div>
       </header>
 
-      <main class="grid flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-[1.7fr_1fr] lg:p-5" data-grid>
-        <section class="flex min-w-0 flex-col gap-2">
-          <h1 class="m-0 font-mono text-label font-semibold uppercase text-muted">Features</h1>
-          @if (notFound(); as missing) {
+      <main
+        class="grid flex-1 grid-cols-1 gap-4 p-4 lg:p-5"
+        [ngClass]="showsProject() ? 'lg:grid-cols-[1.7fr_1fr]' : null"
+        data-grid
+      >
+        @if (notFound(); as missing) {
+          <section class="flex min-w-0 flex-col gap-2">
+            <h1 class="m-0 font-mono text-label font-semibold uppercase text-muted">Features</h1>
             <div
               class="flex flex-wrap items-center gap-x-2 gap-y-2 rounded border border-status-blocked/35 bg-status-blocked/[0.12] px-2.5 py-2 text-xs text-err-text"
               role="alert"
@@ -159,57 +170,50 @@ interface LogTarget {
                 Choose another project
               </button>
             </div>
-          } @else if (loadError()) {
-            <div
-              class="flex items-center gap-2 rounded border border-status-blocked/35 bg-status-blocked/[0.12] px-2.5 py-2 text-xs text-err-text"
-              role="alert"
-            >
-              <span class="shrink-0 font-mono text-tag tracking-[0.08em] text-status-blocked">
-                [ERR]
-              </span>
-              <span class="min-w-0 break-words">{{ loadError() }}</span>
-            </div>
-          }
-          @if (loading()) {
-            <p
-              class="m-0 flex items-center gap-2 rounded-md border border-line bg-panel px-3.5 py-6 text-sm text-muted"
-              role="status"
-              data-state-loading
-            >
-              <span
-                class="inline-block h-3.5 w-3.5 animate-spin-fast rounded-full border-2 border-signal border-r-transparent motion-reduce:animate-none"
-                aria-hidden="true"
-              ></span>
-              @if (slug(); as current) {
-                Loading <span class="font-mono text-text">{{ current }}</span
+          </section>
+        } @else if (showsProject()) {
+          <section class="flex min-w-0 flex-col gap-2">
+            <h1 class="m-0 font-mono text-label font-semibold uppercase text-muted">Features</h1>
+            @if (loadError()) {
+              <div
+                class="flex items-center gap-2 rounded border border-status-blocked/35 bg-status-blocked/[0.12] px-2.5 py-2 text-xs text-err-text"
+                role="alert"
+              >
+                <span class="shrink-0 font-mono text-tag tracking-[0.08em] text-status-blocked">
+                  [ERR]
+                </span>
+                <span class="min-w-0 break-words">{{ loadError() }}</span>
+              </div>
+            }
+            @if (loading()) {
+              <p
+                class="m-0 flex items-center gap-2 rounded-md border border-line bg-panel px-3.5 py-6 text-sm text-muted"
+                role="status"
+                data-state-loading
+              >
+                <span
+                  class="inline-block h-3.5 w-3.5 animate-spin-fast rounded-full border-2 border-signal border-r-transparent motion-reduce:animate-none"
+                  aria-hidden="true"
+                ></span>
+                Loading <span class="font-mono text-text">{{ slug() }}</span
                 >…
-              } @else {
-                Loading projects…
-              }
-            </p>
-          } @else if (noProjects()) {
-            <p
-              class="m-0 rounded-md border border-line bg-panel px-3.5 py-6 text-center text-sm text-muted"
-              data-no-projects
-            >
-              No projects in the mirror yet — run
-              <span class="font-mono text-text">./init.sh</span> in a harness project to sync it.
-            </p>
-          } @else if (showsProject()) {
-            <app-features-table
-              [features]="features() ?? []"
-              [selected]="selectedFeature()"
-              (toggled)="onFeatureToggled($event)"
-            />
-          }
-        </section>
+              </p>
+            } @else {
+              <app-features-table
+                [features]="features() ?? []"
+                [selected]="selectedFeature()"
+                (toggled)="onFeatureToggled($event)"
+              />
+            }
+          </section>
 
-        @if (showsProject()) {
           <aside class="flex min-w-0 flex-col gap-3.5">
             <app-open-session-card [session]="session()" />
             <app-blocked-features-card [features]="blocked()" />
             <app-process-log-card [state]="processLog()" />
           </aside>
+        } @else if (slug() === null) {
+          <app-progress-overview class="min-w-0 lg:col-span-2" />
         }
       </main>
 
@@ -259,13 +263,8 @@ export class DashboardPageComponent implements OnInit {
   readonly processLog = signal<ProcessLogState>({ kind: 'idle' });
 
   readonly activeAgents = computed(() => (this.session() ? 1 : 0));
-  readonly loading = computed(
-    () =>
-      this.stateLoading() ||
-      (this.slug() === null && this.projects() === null && this.projectsError() === null),
-  );
+  readonly loading = computed(() => this.stateLoading());
   readonly showsProject = computed(() => this.slug() !== null && this.notFound() === null);
-  readonly noProjects = computed(() => this.slug() === null && this.projects()?.length === 0);
 
   readonly userInitial = computed(() => {
     const session = this.auth.session();
@@ -280,12 +279,9 @@ export class DashboardPageComponent implements OnInit {
       .subscribe({
         next: (list) => {
           this.projects.set(list);
-          if (this.slug() === null) this.redirectToDefault(list);
         },
         error: (err: { message?: string }) => {
-          const msg = err?.message ?? 'Failed to load projects.';
-          this.projectsError.set(msg);
-          if (this.slug() === null) this.loadError.set(msg);
+          this.projectsError.set(err?.message ?? 'Failed to load projects.');
         },
       });
 
@@ -298,8 +294,6 @@ export class DashboardPageComponent implements OnInit {
         switchMap((slug) => {
           this.resetState(slug);
           if (slug === null) {
-            const list = this.projects();
-            if (list) this.redirectToDefault(list);
             return EMPTY;
           }
           return this.api.getProjectState(slug).pipe(
@@ -389,7 +383,6 @@ export class DashboardPageComponent implements OnInit {
       this.features.set(result.state.features);
       this.session.set(result.state.openSession);
       this.blocked.set(result.state.blockedFeatures);
-      rememberProject(result.slug);
       return;
     }
     if (result.error.status === 404) {
@@ -399,32 +392,9 @@ export class DashboardPageComponent implements OnInit {
     this.loadError.set(result.error.message ?? 'Failed to load harness state.');
     this.features.set([]);
   }
-
-  private redirectToDefault(list: ProjectSummary[]): void {
-    if (list.length === 0) return;
-    const remembered = recallProject();
-    const target = list.some((p) => p.slug === remembered) ? remembered : list[0].slug;
-    void this.router.navigate(['/projects', target], { replaceUrl: true });
-  }
 }
 
 function toLogError(error: HttpErrorResponse, slug: string, name: string): ProcessLogState {
   if (error.status === 404) return { kind: 'not-found', name, slug };
   return { kind: 'error', message: error.message || 'Failed to load the process log.' };
-}
-
-function rememberProject(slug: string): void {
-  try {
-    localStorage.setItem(LAST_PROJECT_STORAGE_KEY, slug);
-  } catch {
-    return;
-  }
-}
-
-function recallProject(): string | null {
-  try {
-    return localStorage.getItem(LAST_PROJECT_STORAGE_KEY);
-  } catch {
-    return null;
-  }
 }

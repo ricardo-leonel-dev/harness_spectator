@@ -23,10 +23,11 @@ module.exports = {
         'grid-dot': '#131820',
         status: {
           pending: '#46505f',
+          'spec-drafting': '#4fa3e0',
+          'spec-ready': '#8b7fe8',
           'in-progress': '#e8a33d',
           blocked: '#e5484d',
           done: '#3ecf8e',
-          'spec-ready': '#8b7fe8',
         },
       },
       fontFamily: {

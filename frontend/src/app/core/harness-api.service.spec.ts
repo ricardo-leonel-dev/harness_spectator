@@ -2,7 +2,12 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 
-import { FeatureLogResponse, HarnessApiService, ProjectSummary } from './harness-api.service';
+import {
+  DashboardResponse,
+  FeatureLogResponse,
+  HarnessApiService,
+  ProjectSummary,
+} from './harness-api.service';
 import { environment } from '../../environments/environment';
 
 describe('HarnessApiService', () => {
@@ -56,6 +61,33 @@ describe('HarnessApiService', () => {
       .expectOne(`${environment.apiBaseUrl}/api/harness/projects/nope/state`)
       .flush({ error: 'not found' }, { status: 404, statusText: 'Not Found' });
     expect(status).toBe(404);
+  });
+
+  it('gets the cross-project dashboard from GET /api/harness/dashboard', () => {
+    const payload: DashboardResponse = {
+      overall: {
+        done: 31,
+        total: 52,
+        percentage: 59.62,
+        byStatus: {
+          pending: 12,
+          specDrafting: 1,
+          specReady: 2,
+          inProgress: 3,
+          blocked: 3,
+          done: 31,
+        },
+      },
+      topProjects: [{ slug: 'spectator_backend', done: 7, total: 8, percentage: 87.5 }],
+    };
+    let received: DashboardResponse | undefined;
+    api.getDashboard().subscribe((data) => (received = data));
+
+    const req = httpTesting.expectOne(`${environment.apiBaseUrl}/api/harness/dashboard`);
+    expect(req.request.method).toBe('GET');
+    req.flush(payload);
+
+    expect(received).toEqual(payload);
   });
 
   it("gets one feature's process log, encoding slug and name", () => {

@@ -7,6 +7,7 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { Session } from '@supabase/supabase-js';
 
 import { DashboardPageComponent } from './dashboard-page.component';
+import { ProjectSelectorComponent } from './project-selector.component';
 import { AuthService } from '../auth/auth.service';
 import { SUPABASE_CLIENT, Supabase } from '../auth/supabase-client';
 import { authInterceptor } from '../core/auth.interceptor';
@@ -134,4 +135,24 @@ describe('ProjectSelectorComponent in a 360px viewport', () => {
     expect(rect.right).toBe(PHONE_WIDTH - 16);
     expect(doc.documentElement.scrollWidth).toBeLessThanOrEqual(PHONE_WIDTH);
   }));
+});
+
+describe('ProjectSelectorComponent trigger text', () => {
+  it('shows "all projects" when there is no current project', () => {
+    const fixture = TestBed.createComponent(ProjectSelectorComponent);
+    fixture.componentInstance.projects = [
+      {
+        slug: 'demo-project',
+        description: '',
+        counts: { total: 1, done: 0, inProgress: 0, blocked: 0 },
+      },
+    ];
+    fixture.componentInstance.current = null;
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    const trigger = host.querySelector('[data-selector-trigger]') as HTMLButtonElement;
+    expect(trigger.textContent?.trim()).toContain('all projects');
+    expect(trigger.getAttribute('aria-label')).toBe('Switch project, current: all projects');
+  });
 });

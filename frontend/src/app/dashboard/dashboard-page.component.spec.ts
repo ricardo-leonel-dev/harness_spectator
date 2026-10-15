@@ -3,16 +3,17 @@ import { provideHttpClient, withInterceptors, withXhr } from '@angular/common/ht
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { provideRouter, Router, Routes } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
+import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { Session } from '@supabase/supabase-js';
 
-import { DashboardPageComponent, LAST_PROJECT_STORAGE_KEY } from './dashboard-page.component';
+import { DashboardPageComponent } from './dashboard-page.component';
 import { routes } from '../app.routes';
 import { AuthService, LOCAL_SESSION_STORAGE_KEY } from '../auth/auth.service';
 import { SUPABASE_CLIENT, Supabase } from '../auth/supabase-client';
 import { LoginPageComponent } from '../auth/login-page.component';
 import { authInterceptor } from '../core/auth.interceptor';
+import { DashboardResponse, FeatureLogResponse } from '../core/harness-api.service';
 import { environment } from '../../environments/environment';
-import { FeatureLogResponse } from '../core/harness-api.service';
 
 interface HarnessStatePayload {
   project: { slug: string; description: string };
@@ -52,7 +53,28 @@ const PROJECTS: ProjectSummaryPayload[] = [
 ];
 
 const PROJECTS_URL = `${environment.apiBaseUrl}/api/harness/projects`;
+const DASHBOARD_URL = `${environment.apiBaseUrl}/api/harness/dashboard`;
 const MODE_URL = `${environment.apiBaseUrl}/api/auth/mode`;
+
+function dashboardResponse(overrides: Partial<DashboardResponse> = {}): DashboardResponse {
+  return {
+    overall: {
+      done: 31,
+      total: 52,
+      percentage: 59.62,
+      byStatus: {
+        pending: 12,
+        specDrafting: 1,
+        specReady: 2,
+        inProgress: 3,
+        blocked: 3,
+        done: 31,
+      },
+    },
+    topProjects: [{ slug: 'spectator_backend', done: 7, total: 8, percentage: 87.5 }],
+    ...overrides,
+  };
+}
 
 function stateUrl(slug: string): string {
   return `${environment.apiBaseUrl}/api/harness/projects/${slug}/state`;
@@ -174,7 +196,6 @@ describe('DashboardPageComponent', () => {
     holdSignOut = false;
     releaseSignOut = null;
     supabaseFactoryCalls = 0;
-    localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
     localStorage.removeItem(LOCAL_SESSION_STORAGE_KEY);
     await TestBed.configureTestingModule({
       imports: [DashboardPageComponent],
@@ -182,6 +203,7 @@ describe('DashboardPageComponent', () => {
         provideRouter(TEST_ROUTES),
         provideHttpClient(withXhr(), withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
+        provideNoopAnimations(),
         {
           provide: SUPABASE_CLIENT,
           useFactory: () => {
@@ -198,7 +220,6 @@ describe('DashboardPageComponent', () => {
   afterEach(() => {
     httpTesting.verify();
     document.querySelector('.cdk-overlay-container')?.replaceChildren();
-    localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
     localStorage.removeItem(LOCAL_SESSION_STORAGE_KEY);
   });
 
@@ -422,6 +443,9 @@ describe('DashboardPageComponent', () => {
     expect(header.className).not.toContain('bg-panel-raised');
 
     const wordmark = header.querySelector('[data-wordmark]') as HTMLElement;
+    expect(wordmark.tagName).toBe('A');
+    expect(wordmark.getAttribute('href')).toBe('/');
+    expect(wordmark.getAttribute('aria-label')).toBe('Overview');
     expect(wordmark.querySelector('[data-beacon="wordmark"]')).toBeTruthy();
     const word = wordmark.lastElementChild as HTMLElement;
     expect(word.className).toContain('font-mono');
@@ -497,10 +521,141 @@ describe('DashboardPageComponent', () => {
     expect(grid.className).toContain('grid-cols-1');
     expect(grid.className).toContain('lg:grid-cols-[1.7fr_1fr]');
     expect(grid.className).toContain('gap-4');
-    expect(grid.className).toContain('lg:p-5');
     expect(getComputedStyle(grid).rowGap).toBe('16px');
     expect(host.querySelector('aside')?.className).toContain('gap-3.5');
   }));
+
+  describe('overview at /', () => {
+    it('renders the progress overview inside main when the URL is / (R3, R4)', fakeAsync(() => {
+      const harness = boot('/');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(DASHBOARD_URL).flush(dashboardResponse());
+      settle(harness);
+      harness.detectChanges();
+      tick();
+      const host = harness.routeNativeElement as HTMLElement;
+      const overview = host.querySelector('app-progress-overview') as HTMLElement;
+      const main = host.querySelector('main') as HTMLElement;
+      expect(overview).toBeTruthy('progress overview should be rendered at /');
+      expect(main).toBeTruthy('main element should exist');
+      expect(main.contains(overview)).toBe(true, 'main should contain the progress overview');
+      expect(main.className ?? '').not.toContain('lg:grid-cols-[1.7fr_1fr]');
+      expect(TestBed.inject(Router).url).toBe('/');
+      httpTesting.expectNone(stateUrl('demo-project'));
+    }));
+
+    it('does not render the project table, aside, loading or empty "no projects" copy at / (R5)', fakeAsync(() => {
+      const harness = boot('/');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(DASHBOARD_URL).flush(dashboardResponse());
+      settle(harness);
+
+      const host = harness.routeNativeElement as HTMLElement;
+      expect(host.querySelector('app-features-table')).toBeNull();
+      expect(host.querySelector('aside')).toBeNull();
+      expect(host.querySelector('[data-state-loading]')).toBeNull();
+      expect(host.textContent).not.toContain('No projects in the mirror yet');
+      expect(host.textContent).not.toContain('Loading projects');
+    }));
+
+    it('shows the project-list failure only inside the selector at /, with no page-level [ERR] (R6)', fakeAsync(() => {
+      const harness = boot('/');
+      httpTesting
+        .expectOne(PROJECTS_URL)
+        .flush({ error: 'boom' }, { status: 500, statusText: 'Server Error' });
+      httpTesting.expectOne(DASHBOARD_URL).flush(dashboardResponse());
+      settle(harness);
+
+      const host = harness.routeNativeElement as HTMLElement;
+      const pageAlerts = Array.from(host.querySelectorAll('main [role="alert"]'));
+      expect(pageAlerts).toEqual([]);
+      trigger(host).click();
+      settle(harness);
+      const panelError = overlay().querySelector('[data-selector-error]') as HTMLElement;
+      expect(panelError.getAttribute('role')).toBe('alert');
+      expect(panelError.textContent).toContain('Could not load projects');
+    }));
+
+    it('does not render the overview or send /api/harness/dashboard on /projects/:slug (R7, R8)', fakeAsync(() => {
+      const host = renderWith(SEEDED_STATE);
+      expect(host.querySelector('app-progress-overview')).toBeNull();
+      httpTesting.expectNone(DASHBOARD_URL);
+    }));
+
+    it('renders the top-bar wordmark as a link to / with the accessible name "Overview" (R10)', fakeAsync(() => {
+      const host = renderWith(SEEDED_STATE);
+      const wordmark = host.querySelector('a[data-wordmark]') as HTMLAnchorElement;
+      expect(wordmark).toBeTruthy();
+      expect(wordmark.getAttribute('href')).toBe('/');
+      expect(wordmark.getAttribute('aria-label')).toBe('Overview');
+      expect(host.querySelector('div[data-wordmark]')).toBeNull();
+    }));
+
+    function mountAt360(nodes: HTMLElement[]): { doc: Document; remove: () => void } {
+      const css = Array.from(document.styleSheets)
+        .map((sheet) => {
+          try {
+            return Array.from(sheet.cssRules)
+              .map((r) => r.cssText)
+              .join('\n');
+          } catch {
+            return '';
+          }
+        })
+        .join('\n');
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'width:360px;height:900px;border:0;position:absolute;left:0;top:0;';
+      document.body.appendChild(iframe);
+      const doc = iframe.contentDocument as Document;
+      doc.open();
+      doc.write('<!doctype html><html><head><style></style></head><body></body></html>');
+      doc.close();
+      (doc.head.querySelector('style') as HTMLStyleElement).textContent = css;
+      for (const node of nodes) doc.body.appendChild(doc.importNode(node, true));
+      return { doc, remove: () => iframe.remove() };
+    }
+
+    it('renders a populated progress overview at 360px with no horizontal scroll (R40)', fakeAsync(() => {
+      const harness = boot('/');
+      httpTesting.expectOne(PROJECTS_URL).flush([
+        ...PROJECTS,
+        {
+          slug: 'spectator_long_project_slug_for_360',
+          description: 'A long description '.repeat(10),
+          counts: { total: 12, done: 4, inProgress: 3, blocked: 2 },
+        },
+      ]);
+      httpTesting.expectOne(DASHBOARD_URL).flush(
+        dashboardResponse({
+          topProjects: [
+            {
+              slug: 'spectator_long_project_slug_for_360',
+              done: 4,
+              total: 12,
+              percentage: 33.33,
+            },
+            { slug: 'demo-project', done: 7, total: 8, percentage: 87.5 },
+            { slug: 'other-project', done: 1, total: 4, percentage: 25 },
+          ],
+        }),
+      );
+      settle(harness);
+
+      const host = harness.routeNativeElement as HTMLElement;
+      const overview = host.querySelector('app-progress-overview') as HTMLElement;
+      expect(overview).toBeTruthy();
+      const { doc, remove } = mountAt360([host]);
+      try {
+        expect(doc.documentElement.clientWidth).toBe(360);
+        // The chart wrappers set their own internal width via ngx-charts's ResizeObserver;
+        // what matters to the user is the page-level horizontal scroll, not the SVG's
+        // default view (which overflows its wrapper but is clipped by overflow-hidden).
+        expect(doc.documentElement.scrollWidth).toBeLessThanOrEqual(360);
+      } finally {
+        remove();
+      }
+    }));
+  });
 
   it('shows a redirecting overlay and a disabled "Logging out…" button until navigation completes', fakeAsync(() => {
     holdSignOut = true;
@@ -592,7 +747,7 @@ describe('DashboardPageComponent', () => {
     const harness = boot('/projects/demo-project');
     httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
     const req = httpTesting.expectOne(stateUrl('demo-project'));
-    req.flush({ error: 'unauthorized' }, { status: 401, statusText: 'Unauthorized' });
+    req.flush({ error: 'boom' }, { status: 500, statusText: 'Internal Server Error' });
     settle(harness);
 
     const errorBanner = harness.routeNativeElement!.querySelector(
@@ -706,7 +861,6 @@ describe('DashboardPageComponent', () => {
       expect(button.getAttribute('aria-expanded')).toBe('false');
       expect(host.querySelector('[data-project-slug]')?.textContent?.trim()).toBe('other-project');
       expect(host.querySelector('[data-feature-name]')?.textContent?.trim()).toBe('seventh');
-      expect(localStorage.getItem(LAST_PROJECT_STORAGE_KEY)).toBe('other-project');
     }));
 
     it('closes on Escape, or on Enter over the current project, without navigating', fakeAsync(() => {
@@ -762,98 +916,34 @@ describe('DashboardPageComponent', () => {
   });
 
   describe('default route', () => {
-    it('redirects / to the first project when nothing is remembered', fakeAsync(() => {
+    it('renders the progress overview at / and never redirects to /projects/:slug', fakeAsync(() => {
       const harness = boot('/');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(DASHBOARD_URL).flush(dashboardResponse());
+      settle(harness);
+
+      expect(TestBed.inject(Router).url).toBe('/');
       const host = harness.routeNativeElement as HTMLElement;
-      expect(host.querySelector('[data-state-loading]')?.textContent).toContain('Loading projects');
+      expect(host.querySelector('app-progress-overview')).toBeTruthy();
+      httpTesting.expectNone(stateUrl('demo-project'));
+    }));
 
+    it('navigating from / back to / after viewing a project does not re-trigger the state fetch', fakeAsync(() => {
+      const harness = boot('/projects/demo-project');
       httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
-      settle(harness);
-
-      expect(TestBed.inject(Router).url).toBe('/projects/demo-project');
       httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
-      settle(harness);
-      expect(localStorage.getItem(LAST_PROJECT_STORAGE_KEY)).toBe('demo-project');
-    }));
-
-    it('redirects / to the last selected project from localStorage', fakeAsync(() => {
-      localStorage.setItem(LAST_PROJECT_STORAGE_KEY, 'other-project');
-      const harness = boot('/');
-      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
-      settle(harness);
-
-      expect(TestBed.inject(Router).url).toBe('/projects/other-project');
-      httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
-      settle(harness);
-    }));
-
-    it('redirects an in-app navigation back to / once the dashboard is already loaded', fakeAsync(() => {
-      const harness = boot('/projects/other-project');
-      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
-      httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
       settle(harness);
       const router = TestBed.inject(Router);
 
       void router.navigateByUrl('/');
       settle(harness);
 
-      expect(router.url).toBe('/projects/other-project');
-      httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
+      expect(router.url).toBe('/');
+      httpTesting.expectOne(DASHBOARD_URL).flush(dashboardResponse());
       settle(harness);
       const host = harness.routeNativeElement as HTMLElement;
-      expect(host.querySelector('[data-project-slug]')?.textContent?.trim()).toBe('other-project');
-      expect(host.querySelectorAll('[data-feature-row]').length).toBe(2);
-    }));
-
-    it('falls back to the first project when the remembered one no longer exists', fakeAsync(() => {
-      localStorage.setItem(LAST_PROJECT_STORAGE_KEY, 'gone-project');
-      const harness = boot('/');
-      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
-      settle(harness);
-
-      expect(TestBed.inject(Router).url).toBe('/projects/demo-project');
-      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
-      settle(harness);
-    }));
-
-    it('shows an inline empty state when the mirror has no projects', fakeAsync(() => {
-      const harness = boot('/');
-      httpTesting.expectOne(PROJECTS_URL).flush([]);
-      settle(harness);
-      const host = harness.routeNativeElement as HTMLElement;
-
-      expect(TestBed.inject(Router).url).toBe('/');
-      expect(host.querySelector('[data-no-projects]')?.textContent).toContain('No projects');
-
-      trigger(host).click();
-      settle(harness);
-      expect(overlay().querySelector('[data-selector-empty]')).toBeTruthy();
-    }));
-
-    it('surfaces a project-list failure inline on the page and inside the selector', fakeAsync(() => {
-      const harness = boot('/');
-      httpTesting
-        .expectOne(PROJECTS_URL)
-        .flush({ error: 'boom' }, { status: 500, statusText: 'Server Error' });
-      settle(harness);
-      const host = harness.routeNativeElement as HTMLElement;
-
-      expect(TestBed.inject(Router).url).toBe('/');
-      expect(host.querySelector('[role="alert"]')?.textContent).toContain('[ERR]');
-      expect(host.querySelector('app-features-table')).toBeNull();
-      expect(host.querySelector('aside')).toBeNull();
-      expect(host.textContent).not.toContain('Nothing queued yet');
-      expect(host.textContent).not.toContain('No agent session open.');
-      expect(host.textContent).not.toContain('Nothing blocked.');
-
-      trigger(host).click();
-      settle(harness);
-      const panelError = overlay().querySelector('[data-selector-error]') as HTMLElement;
-      expect(panelError.getAttribute('role')).toBe('alert');
-      expect(panelError.textContent).toContain('Could not load projects');
-      const message = panelError.lastElementChild as HTMLElement;
-      expect(message.className).toContain('min-w-0');
-      expect(getComputedStyle(message).overflowWrap).toBe('break-word');
+      expect(host.querySelector('app-progress-overview')).toBeTruthy();
+      httpTesting.expectNone(stateUrl('demo-project'));
     }));
   });
 
@@ -872,7 +962,6 @@ describe('DashboardPageComponent', () => {
       expect(banner.textContent).toContain('nope');
       expect(host.querySelector('app-features-table')).toBeNull();
       expect(host.querySelector('aside')).toBeNull();
-      expect(localStorage.getItem(LAST_PROJECT_STORAGE_KEY)).toBeNull();
 
       (banner.querySelector('[data-choose-project]') as HTMLButtonElement).click();
       settle(harness);
@@ -1026,7 +1115,7 @@ describe('DashboardPageComponent', () => {
       expect(getComputedStyle(title).fontFamily).toContain('IBM Plex Mono');
     }));
 
-    it('shows the not-found message for a 404 and [ERR] for a 401 inside the card', fakeAsync(() => {
+    it('shows the not-found message for a 404 and [ERR] for a 500 inside the card', fakeAsync(() => {
       stubMedia(true, false);
       const harness = openWithFeature('ghost');
       const host = harness.routeNativeElement as HTMLElement;
@@ -1046,12 +1135,12 @@ describe('DashboardPageComponent', () => {
       settle(harness);
       httpTesting
         .expectOne(logUrl('demo-project', 'first'))
-        .flush({ error: 'unauthorized' }, { status: 401, statusText: 'Unauthorized' });
+        .flush({ error: 'boom' }, { status: 500, statusText: 'Internal Server Error' });
       settle(harness);
 
       alert = card(host).querySelector('[role="alert"]') as HTMLElement;
       expect(alert.textContent).toContain('[ERR]');
-      expect(alert.textContent).toContain('401 Unauthorized');
+      expect(alert.textContent).toContain('500 Internal Server Error');
       expect(alert.textContent).not.toContain('[404]');
       expect(TestBed.inject(Router).url).toBe('/projects/demo-project?feature=first');
     }));

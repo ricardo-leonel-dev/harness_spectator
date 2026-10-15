@@ -4,6 +4,7 @@ import { Router } from '@angular/router';
 import { LucideAngularModule, Coffee, Heart, Key, Mail } from 'lucide-angular';
 
 import { AuthService, MODE_UNAVAILABLE_MESSAGE } from './auth.service';
+import { safeReturnUrl } from './return-url';
 
 @Component({
   selector: 'app-login-page',
@@ -153,6 +154,7 @@ export class LoginPageComponent {
       this.errorMessage.set(result.error ?? 'Login failed');
       return;
     }
-    await this.router.navigate(['/']);
+    const returnUrl = this.router.parseUrl(this.router.url).queryParamMap.get('returnUrl');
+    await this.router.navigateByUrl(safeReturnUrl(returnUrl));
   }
 }
