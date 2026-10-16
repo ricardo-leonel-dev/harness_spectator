@@ -9,7 +9,7 @@ use tower::ServiceExt;
 
 mod common;
 
-use common::{build_test_app, make_token, valid_token, TEST_JWT_SECRET};
+use common::{build_test_app, make_token, valid_token, TestDb, TEST_JWT_SECRET};
 use harness_frontend_backend::harness::reader::{
     list_projects, read_dashboard, read_feature_agent_usage, read_feature_log,
     read_features_by_status, read_project_state,
@@ -438,8 +438,10 @@ async fn fetch_session_timestamps(pool: &PgPool, session_id: i64) -> SessionTime
     }
 }
 
-#[sqlx::test]
-async fn projects_returns_non_deleted_projects_with_counts_ordered_by_slug(pool: PgPool) {
+#[tokio::test]
+async fn projects_returns_non_deleted_projects_with_counts_ordered_by_slug() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let alpha = seed_project(&pool, "alpha", Some("Alpha project"), false).await;
     seed_project(&pool, "beta", None, false).await;
     let gamma = seed_project(&pool, "gamma", Some("deleted"), true).await;
@@ -473,8 +475,10 @@ async fn projects_returns_non_deleted_projects_with_counts_ordered_by_slug(pool:
     );
 }
 
-#[sqlx::test]
-async fn project_state_returns_mirror_data_for_the_requested_slug(pool: PgPool) {
+#[tokio::test]
+async fn project_state_returns_mirror_data_for_the_requested_slug() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", Some("test desc"), false).await;
     let other = seed_project(&pool, "other-project", None, false).await;
 
@@ -579,8 +583,10 @@ async fn project_state_returns_mirror_data_for_the_requested_slug(pool: PgPool) 
     );
 }
 
-#[sqlx::test]
-async fn project_state_reports_no_open_session_when_only_paused_or_closed_exist(pool: PgPool) {
+#[tokio::test]
+async fn project_state_reports_no_open_session_when_only_paused_or_closed_exist() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "blocked_feat", "blocked", false, false).await;
     let latest = seed_session(
@@ -647,8 +653,10 @@ async fn project_state_reports_no_open_session_when_only_paused_or_closed_exist(
     );
 }
 
-#[sqlx::test]
-async fn project_state_for_unknown_or_deleted_slug_returns_404(pool: PgPool) {
+#[tokio::test]
+async fn project_state_for_unknown_or_deleted_slug_returns_404() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     seed_project(&pool, "deleted-project", None, true).await;
 
     for slug in ["missing-project", "deleted-project"] {
@@ -658,8 +666,10 @@ async fn project_state_for_unknown_or_deleted_slug_returns_404(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
-async fn project_state_prefers_active_project_over_deleted_one_with_same_slug(pool: PgPool) {
+#[tokio::test]
+async fn project_state_prefers_active_project_over_deleted_one_with_same_slug() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let deleted = seed_project(&pool, "reused", Some("old"), true).await;
     seed_feature(&pool, deleted, 1, "old_feat", "done", false, false).await;
     let active = seed_project(&pool, "reused", Some("new"), false).await;
@@ -673,8 +683,10 @@ async fn project_state_prefers_active_project_over_deleted_one_with_same_slug(po
     assert_eq!(body["features"][0]["name"], "new_feat");
 }
 
-#[sqlx::test]
-async fn old_state_route_is_gone(pool: PgPool) {
+#[tokio::test]
+async fn old_state_route_is_gone() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let app = build_test_app(pool).await;
     let req = Request::builder()
         .method("GET")
@@ -704,8 +716,10 @@ fn unauthorized_cases() -> Vec<(&'static str, Option<String>)> {
     ]
 }
 
-#[sqlx::test]
-async fn harness_endpoints_return_401_without_a_valid_token(pool: PgPool) {
+#[tokio::test]
+async fn harness_endpoints_return_401_without_a_valid_token() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", Some("secret desc"), false).await;
     seed_feature(&pool, project, 1, "first_feat", "done", false, false).await;
 
@@ -728,8 +742,10 @@ async fn harness_endpoints_return_401_without_a_valid_token(pool: PgPool) {
 /// The reader must be SELECT-only: run both reader functions over a pool whose
 /// sessions default to read-only transactions, where any INSERT/UPDATE/DELETE
 /// fails with an error instead of succeeding.
-#[sqlx::test]
-async fn reader_performs_only_select_queries(pool: PgPool) -> sqlx::Result<()> {
+#[tokio::test]
+async fn reader_performs_only_select_queries() -> sqlx::Result<()> {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "blocked_feat", "blocked", false, false).await;
     let session = seed_session(
@@ -804,8 +820,10 @@ async fn reader_performs_only_select_queries(pool: PgPool) -> sqlx::Result<()> {
     Ok(())
 }
 
-#[sqlx::test]
-async fn feature_log_returns_header_and_sessions(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_returns_header_and_sessions() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", Some("proj desc"), false).await;
     let feature = seed_feature(
         &pool,
@@ -893,8 +911,10 @@ async fn feature_log_returns_header_and_sessions(pool: PgPool) {
     assert_eq!(entries[1]["createdAt"], entry2_ts);
 }
 
-#[sqlx::test]
-async fn feature_log_orders_sessions_and_entries_ascending(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_orders_sessions_and_entries_ascending() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(
         &pool,
@@ -1081,8 +1101,10 @@ async fn feature_log_orders_sessions_and_entries_ascending(pool: PgPool) {
     assert_eq!(tie_entry_texts, vec!["tie", "tie2", "tie3"]);
 }
 
-#[sqlx::test]
-async fn feature_log_excludes_soft_deleted_sessions_and_entries(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_excludes_soft_deleted_sessions_and_entries() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "soft_del", "done", false, false).await;
 
@@ -1159,8 +1181,10 @@ async fn feature_log_excludes_soft_deleted_sessions_and_entries(pool: PgPool) {
     assert_eq!(texts, vec!["live-1", "live-3"]);
 }
 
-#[sqlx::test]
-async fn feature_log_excludes_sessions_of_other_features(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_excludes_sessions_of_other_features() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let target = seed_feature(
         &pool,
@@ -1250,8 +1274,10 @@ async fn feature_log_excludes_sessions_of_other_features(pool: PgPool) {
     assert_eq!(sessions[0]["agent"], "target-own");
 }
 
-#[sqlx::test]
-async fn feature_log_with_no_sessions_returns_empty_list(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_with_no_sessions_returns_empty_list() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     seed_feature(&pool, project, 1, "lonely_feat", "pending", false, false).await;
 
@@ -1267,8 +1293,10 @@ async fn feature_log_with_no_sessions_returns_empty_list(pool: PgPool) {
     assert_eq!(body["sessions"], json!([]));
 }
 
-#[sqlx::test]
-async fn feature_log_renders_nulls_explicitly(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_renders_nulls_explicitly() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "null_feat", "in_progress", false, false).await;
     set_feature_description(&pool, feature, None).await;
@@ -1352,8 +1380,10 @@ async fn feature_log_renders_nulls_explicitly(pool: PgPool) {
     assert_eq!(second["closedAt"], Value::Null);
 }
 
-#[sqlx::test]
-async fn feature_log_for_unknown_or_deleted_project_returns_404(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_for_unknown_or_deleted_project_returns_404() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     seed_project(&pool, "deleted-project", None, true).await;
 
     let project = seed_project(&pool, "alive-project", None, false).await;
@@ -1386,8 +1416,10 @@ async fn feature_log_for_unknown_or_deleted_project_returns_404(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
-async fn feature_log_for_unknown_or_deleted_feature_returns_404(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_for_unknown_or_deleted_feature_returns_404() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     seed_feature(&pool, project, 1, "alive_feat", "in_progress", false, false).await;
     seed_feature(
@@ -1413,8 +1445,10 @@ async fn feature_log_for_unknown_or_deleted_feature_returns_404(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
-async fn feature_log_does_not_cross_projects(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_does_not_cross_projects() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let other = seed_project(&pool, "other-project", None, false).await;
     seed_feature(
@@ -1468,8 +1502,10 @@ fn empty_agent_usage() -> Value {
     })
 }
 
-#[sqlx::test]
-async fn dashboard_with_empty_mirror_returns_zeroes(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_with_empty_mirror_returns_zeroes() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
@@ -1494,8 +1530,10 @@ async fn dashboard_with_empty_mirror_returns_zeroes(pool: PgPool) {
     );
 }
 
-#[sqlx::test]
-async fn dashboard_aggregates_counts_across_projects(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_aggregates_counts_across_projects() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let alpha = seed_project(&pool, "alpha", Some("alpha desc"), false).await;
     let beta = seed_project(&pool, "beta", Some("beta desc"), false).await;
 
@@ -1555,8 +1593,10 @@ async fn dashboard_aggregates_counts_across_projects(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
-async fn dashboard_excludes_deleted_and_superseded_features(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_excludes_deleted_and_superseded_features() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let alpha = seed_project(&pool, "alpha", None, false).await;
     let beta = seed_project(&pool, "beta", None, false).await;
     let gamma = seed_project(&pool, "gamma", None, false).await;
@@ -1622,8 +1662,10 @@ async fn dashboard_excludes_deleted_and_superseded_features(pool: PgPool) {
     let _ = gamma;
 }
 
-#[sqlx::test]
-async fn dashboard_excludes_deleted_projects(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_excludes_deleted_projects() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let deleted = seed_project(&pool, "ghost", None, true).await;
     let live = seed_project(&pool, "alive", None, false).await;
 
@@ -1655,8 +1697,10 @@ async fn dashboard_excludes_deleted_projects(pool: PgPool) {
     assert_eq!(slugs, vec!["alive"]);
 }
 
-#[sqlx::test]
-async fn dashboard_percentage_is_zero_when_nothing_is_countable(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_percentage_is_zero_when_nothing_is_countable() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let only = seed_project(&pool, "only", None, false).await;
     seed_feature(
         &pool,
@@ -1700,8 +1744,10 @@ async fn dashboard_percentage_is_zero_when_nothing_is_countable(pool: PgPool) {
     assert_eq!(body["topProjects"], json!([]));
 }
 
-#[sqlx::test]
-async fn dashboard_orders_projects_by_done_then_percentage_then_slug(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_orders_projects_by_done_then_percentage_then_slug() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let c = seed_project(&pool, "c-proj", None, false).await;
     let a = seed_project(&pool, "a-proj", None, false).await;
     let b = seed_project(&pool, "b-proj", None, false).await;
@@ -1728,8 +1774,10 @@ async fn dashboard_orders_projects_by_done_then_percentage_then_slug(pool: PgPoo
     );
 }
 
-#[sqlx::test]
-async fn dashboard_limits_top_projects_to_ten(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_limits_top_projects_to_ten() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     for n in 1..=12 {
         let slug = format!("p{n:02}");
         let project = seed_project(&pool, &slug, None, false).await;
@@ -1776,8 +1824,10 @@ fn with_key(key: &str, value: Value, bucket: Value) -> Value {
     Value::Object(obj)
 }
 
-#[sqlx::test]
-async fn dashboard_agent_usage_aggregates_runs_across_projects(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_agent_usage_aggregates_runs_across_projects() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let alpha = seed_project(&pool, "alpha", None, false).await;
     let beta = seed_project(&pool, "beta", None, false).await;
     let gamma = seed_project(&pool, "gamma", None, false).await;
@@ -1940,8 +1990,10 @@ async fn dashboard_agent_usage_aggregates_runs_across_projects(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
-async fn dashboard_agent_usage_orders_breakdowns_and_ranking(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_agent_usage_orders_breakdowns_and_ranking() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let p_a = seed_project(&pool, "p-a", None, false).await;
     let p_b = seed_project(&pool, "p-b", None, false).await;
     let p_c = seed_project(&pool, "p-c", None, false).await;
@@ -2010,8 +2062,10 @@ async fn dashboard_agent_usage_orders_breakdowns_and_ranking(pool: PgPool) {
     assert_eq!(usage["topProjects"][3]["runs"], json!(2));
 }
 
-#[sqlx::test]
-async fn dashboard_agent_usage_limits_top_projects_to_ten(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_agent_usage_limits_top_projects_to_ten() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     for n in 1..=12_i64 {
         let slug = format!("u{n:02}");
         let project = seed_project(&pool, &slug, None, false).await;
@@ -2044,8 +2098,10 @@ async fn dashboard_agent_usage_limits_top_projects_to_ten(pool: PgPool) {
     assert_eq!(usage["tokens"]["total"], json!(780));
 }
 
-#[sqlx::test]
-async fn dashboard_agent_usage_is_empty_when_only_deleted_runs_exist(pool: PgPool) {
+#[tokio::test]
+async fn dashboard_agent_usage_is_empty_when_only_deleted_runs_exist() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let live = seed_project(&pool, "live", None, false).await;
     let gone = seed_project(&pool, "gone", None, true).await;
     seed_feature(&pool, live, 1, "l1", "done", false, false).await;
@@ -2097,8 +2153,10 @@ async fn dashboard_agent_usage_is_empty_when_only_deleted_runs_exist(pool: PgPoo
     );
 }
 
-#[sqlx::test]
-async fn agent_usage_returns_run_tree_and_totals(pool: PgPool) {
+#[tokio::test]
+async fn agent_usage_returns_run_tree_and_totals() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "usage_feat", "done", true, false).await;
     let f = Some(feature);
@@ -2282,8 +2340,10 @@ async fn agent_usage_returns_run_tree_and_totals(pool: PgPool) {
     );
 }
 
-#[sqlx::test]
-async fn agent_usage_renders_nulls_and_orders_by_start_then_id(pool: PgPool) {
+#[tokio::test]
+async fn agent_usage_renders_nulls_and_orders_by_start_then_id() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "null_feat", "done", false, false).await;
     let f = Some(feature);
@@ -2378,8 +2438,10 @@ async fn agent_usage_renders_nulls_and_orders_by_start_then_id(pool: PgPool) {
     );
 }
 
-#[sqlx::test]
-async fn agent_usage_places_runs_without_a_parent_at_root(pool: PgPool) {
+#[tokio::test]
+async fn agent_usage_places_runs_without_a_parent_at_root() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "orphan_feat", "done", false, false).await;
     let other = seed_feature(&pool, project, 2, "other_feat", "done", false, false).await;
@@ -2494,8 +2556,10 @@ async fn agent_usage_places_runs_without_a_parent_at_root(pool: PgPool) {
     );
 }
 
-#[sqlx::test]
-async fn agent_usage_breaks_parent_cycles_at_the_earliest_run(pool: PgPool) {
+#[tokio::test]
+async fn agent_usage_breaks_parent_cycles_at_the_earliest_run() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "cycle_feat", "done", false, false).await;
     let f = Some(feature);
@@ -2547,8 +2611,10 @@ async fn agent_usage_breaks_parent_cycles_at_the_earliest_run(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
-async fn agent_usage_excludes_deleted_runs_and_other_features(pool: PgPool) {
+#[tokio::test]
+async fn agent_usage_excludes_deleted_runs_and_other_features() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let other_project = seed_project(&pool, "other-project", None, false).await;
     let target = seed_feature(&pool, project, 1, "shared_name", "done", false, false).await;
@@ -2610,8 +2676,10 @@ async fn agent_usage_excludes_deleted_runs_and_other_features(pool: PgPool) {
     );
 }
 
-#[sqlx::test]
-async fn agent_usage_with_no_runs_returns_empty_tree_and_zero_totals(pool: PgPool) {
+#[tokio::test]
+async fn agent_usage_with_no_runs_returns_empty_tree_and_zero_totals() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "quiet_feat", "done", false, false).await;
     seed_session(
@@ -2643,8 +2711,10 @@ async fn agent_usage_with_no_runs_returns_empty_tree_and_zero_totals(pool: PgPoo
     );
 }
 
-#[sqlx::test]
-async fn agent_usage_for_unknown_or_deleted_project_returns_404(pool: PgPool) {
+#[tokio::test]
+async fn agent_usage_for_unknown_or_deleted_project_returns_404() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let deleted = seed_project(&pool, "deleted-project", None, true).await;
     seed_feature(&pool, deleted, 1, "some_feat", "done", false, false).await;
     let alive = seed_project(&pool, "alive-project", None, false).await;
@@ -2662,8 +2732,10 @@ async fn agent_usage_for_unknown_or_deleted_project_returns_404(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
-async fn agent_usage_for_unknown_or_deleted_feature_returns_404(pool: PgPool) {
+#[tokio::test]
+async fn agent_usage_for_unknown_or_deleted_feature_returns_404() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     seed_feature(&pool, project, 1, "alive_feat", "done", false, false).await;
     seed_feature(&pool, project, 2, "deleted_feat", "done", false, true).await;
@@ -2680,8 +2752,10 @@ async fn agent_usage_for_unknown_or_deleted_feature_returns_404(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
-async fn agent_usage_does_not_cross_projects(pool: PgPool) {
+#[tokio::test]
+async fn agent_usage_does_not_cross_projects() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     seed_project(&pool, "project-a", None, false).await;
     let b = seed_project(&pool, "project-b", None, false).await;
     let feature = seed_feature(&pool, b, 1, "b_only", "done", false, false).await;
@@ -2706,8 +2780,10 @@ async fn agent_usage_does_not_cross_projects(pool: PgPool) {
     assert_eq!(b_body["runs"][0]["externalId"], "run-b");
 }
 
-#[sqlx::test]
-async fn feature_log_is_unchanged_when_agent_runs_exist(pool: PgPool) {
+#[tokio::test]
+async fn feature_log_is_unchanged_when_agent_runs_exist() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "test-project", None, false).await;
     let feature = seed_feature(&pool, project, 1, "logged_feat", "done", true, false).await;
     let session = seed_session(
@@ -2759,8 +2835,10 @@ async fn feature_log_is_unchanged_when_agent_runs_exist(pool: PgPool) {
     assert_eq!(keys, vec!["feature", "sessions"]);
 }
 
-#[sqlx::test]
-async fn test_schema_reproduces_toolkit_agent_runs(pool: PgPool) {
+#[tokio::test]
+async fn test_schema_reproduces_toolkit_agent_runs() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT column_name::text, data_type::text, is_nullable::text, column_default::text
          FROM information_schema.columns
@@ -2916,8 +2994,10 @@ fn listed(slug: &str, name: &str, status: &str) -> Value {
 
 /// `alpha` gets two live features per status (except `in_progress`, which the
 /// schema caps at one per project), inserted out of `feature_number` order.
-#[sqlx::test]
-async fn features_by_status_filters_each_status_across_projects(pool: PgPool) {
+#[tokio::test]
+async fn features_by_status_filters_each_status_across_projects() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let statuses = [
         "pending",
         "spec_drafting",
@@ -2969,8 +3049,10 @@ async fn features_by_status_filters_each_status_across_projects(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
-async fn features_by_status_returns_empty_list_when_nothing_matches(pool: PgPool) {
+#[tokio::test]
+async fn features_by_status_returns_empty_list_when_nothing_matches() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "alpha", None, false).await;
     seed_feature(&pool, project, 1, "only_done", "done", false, false).await;
     seed_feature(&pool, project, 2, "deleted_blocked", "blocked", false, true).await;
@@ -2981,8 +3063,10 @@ async fn features_by_status_returns_empty_list_when_nothing_matches(pool: PgPool
     assert_eq!(body, json!([]));
 }
 
-#[sqlx::test]
-async fn features_by_status_rejects_missing_or_invalid_status(pool: PgPool) {
+#[tokio::test]
+async fn features_by_status_rejects_missing_or_invalid_status() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let project = seed_project(&pool, "alpha", None, false).await;
     seed_feature(&pool, project, 1, "old", "superseded", false, false).await;
 
@@ -2999,4 +3083,45 @@ async fn features_by_status_rejects_missing_or_invalid_status(pool: PgPool) {
         assert_eq!(code, StatusCode::BAD_REQUEST, "{uri}");
         assert_eq!(body, json!({ "error": "bad request" }), "{uri}");
     }
+}
+
+/// Feature 12 regression: test databases must be unique per invocation, not per
+/// test path, so concurrent `cargo test` processes cannot collide on them, and
+/// each one must be dropped when its owner goes out of scope.
+#[tokio::test]
+async fn test_db_names_are_unique_per_invocation_and_dropped_after_use() {
+    let first = TestDb::new().await;
+    let second = TestDb::new().await;
+    assert_ne!(first.name(), second.name());
+
+    let admin = PgPool::connect(&std::env::var("DATABASE_URL").unwrap())
+        .await
+        .unwrap();
+    let exists = |name: String| {
+        let admin = admin.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
+            )
+            .bind(name)
+            .fetch_one(&admin)
+            .await
+            .unwrap()
+        }
+    };
+
+    let projects: i64 = sqlx::query_scalar("SELECT count(*) FROM projects")
+        .fetch_one(&first.pool())
+        .await
+        .unwrap();
+    assert_eq!(projects, 0, "each test database starts migrated and empty");
+
+    let first_name = first.name().to_string();
+    assert!(exists(first_name.clone()).await);
+    drop(first);
+    assert!(
+        !exists(first_name).await,
+        "dropped TestDb must remove its database"
+    );
+    assert!(exists(second.name().to_string()).await);
 }

@@ -3,14 +3,13 @@ use axum::http::{Method, Request, StatusCode};
 use axum::Router;
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde_json::{json, Value};
-use sqlx::PgPool;
 use tower::ServiceExt;
 
 mod common;
 
 use common::{
     build_test_app_with, build_test_config, build_test_config_local, lazy_pool, make_local_token,
-    valid_token, TEST_JWT_SECRET, TEST_LOCAL_EMAIL, TEST_LOCAL_PASSWORD, TEST_LOCAL_SECRET,
+    valid_token, TestDb, TEST_JWT_SECRET, TEST_LOCAL_EMAIL, TEST_LOCAL_PASSWORD, TEST_LOCAL_SECRET,
     TEST_LOCAL_TTL_SECS,
 };
 use harness_frontend_backend::auth::local_token::{LOCAL_TOKEN_AUDIENCE, LOCAL_TOKEN_ISSUER};
@@ -210,8 +209,10 @@ async fn refresh_and_logout_routes_do_not_exist() {
     }
 }
 
-#[sqlx::test]
-async fn local_token_from_login_reads_projects(pool: PgPool) {
+#[tokio::test]
+async fn local_token_from_login_reads_projects() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let app = build_test_app_with(pool, build_test_config_local());
     let (status, body) = send(
         app.clone(),
