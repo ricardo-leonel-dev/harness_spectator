@@ -89,8 +89,8 @@ migrated.
    - `src/harness/` — the read-only Postgres reader (`sqlx` queries) and the
      `/api/harness/projects`, `/api/harness/projects/{slug}/state`,
      `/api/harness/projects/{slug}/features/{name}/log`,
-     `/api/harness/projects/{slug}/features/{name}/agent-usage` and `/api/harness/dashboard`
-     routes.
+     `/api/harness/projects/{slug}/features/{name}/agent-usage`, `/api/harness/dashboard` and
+     `/api/harness/features` routes.
    - `src/config.rs` — the only place environment variables are read.
    Don't let implementers introduce additional top-level layers without updating this file first.
 2. **Dependencies.** Approved allowlist, not "anything goes":
@@ -193,6 +193,15 @@ frontend (separate project/process)
           projects with a counted run, ordered by `tokens.total` descending then `slug`
           ascending (byte-wise); every slug resolves on `/state` like the progress
           ranking. With no counted run, `agentUsage` is all zero buckets and empty arrays.
+        - GET /api/harness/features?status=<status> (feature 11: `features_by_status_api`):
+          every non-deleted feature of a non-deleted project whose `status` equals the query
+          value, as `[{projectSlug, name, title, status}]`, ordered by `projectSlug` ascending
+          then `feature_number` ascending. `status` takes the `feature_status` value as stored
+          (`pending`, `spec_drafting`, `spec_ready`, `in_progress`, `blocked`, `done` — the six
+          statuses the dashboard's `byStatus` counts); a missing, empty or other value
+          (including `superseded` and the camelCase `byStatus` keys) answers
+          `400 {"error":"bad request"}`. No match answers `200 []`. Every `projectSlug`/`name`
+          pair resolves on the per-feature log route.
   -> JSON response
 ```
 

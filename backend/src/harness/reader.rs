@@ -671,6 +671,67 @@ pub async fn read_dashboard(pool: &PgPool) -> Result<DashboardResponse, ApiError
     })
 }
 
+pub const LISTABLE_FEATURE_STATUSES: [&str; 6] = [
+    "pending",
+    "spec_drafting",
+    "spec_ready",
+    "in_progress",
+    "blocked",
+    "done",
+];
+
+#[derive(Debug, FromRow)]
+struct FeatureByStatusDbRow {
+    slug: String,
+    name: String,
+    title: String,
+    status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FeatureByStatus {
+    #[serde(rename = "projectSlug")]
+    pub project_slug: String,
+    pub name: String,
+    pub title: String,
+    pub status: String,
+}
+
+impl From<FeatureByStatusDbRow> for FeatureByStatus {
+    fn from(r: FeatureByStatusDbRow) -> Self {
+        Self {
+            project_slug: r.slug,
+            name: r.name,
+            title: r.title,
+            status: r.status,
+        }
+    }
+}
+
+pub async fn read_features_by_status(
+    pool: &PgPool,
+    status: &str,
+) -> Result<Vec<FeatureByStatus>, ApiError> {
+    if !LISTABLE_FEATURE_STATUSES.contains(&status) {
+        return Err(ApiError::BadRequest);
+    }
+
+    let rows: Vec<FeatureByStatusDbRow> = sqlx::query_as(
+        "SELECT p.slug, f.name, f.title, f.status::text AS status
+         FROM features f
+         JOIN projects p ON p.id = f.project_id
+         WHERE p.deleted_at IS NULL
+           AND f.deleted_at IS NULL
+           AND f.status::text = $1
+         ORDER BY p.slug, f.feature_number, f.id",
+    )
+    .bind(status)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
 pub async fn read_feature_log(
     pool: &PgPool,
     project_slug: &str,
