@@ -32,7 +32,8 @@ An `axum`-native integration test (`tower::ServiceExt::oneshot` against the real
 `build_app`, no mocking of the app itself) run against a throwaway `sqlx::test` Postgres schema:
 `GET /api/harness/projects`, `GET /api/harness/projects/{slug}/state`,
 `GET /api/harness/projects/{slug}/features/{name}/log`,
-`GET /api/harness/projects/{slug}/features/{name}/agent-usage` and `GET /api/harness/dashboard` with a
+`GET /api/harness/projects/{slug}/features/{name}/agent-usage`, `GET /api/harness/dashboard` and
+`GET /api/harness/features?status=<status>` with a
 validly-signed Supabase JWT (crafted in the test using the same test `SUPABASE_JWT_SECRET`) assert
 200 and the seeded mirror-shaped project/feature/session data (an unknown slug or feature asserts
 404 on the per-project and per-feature endpoints); the same requests with a missing, malformed, or expired JWT assert
@@ -45,6 +46,10 @@ The dashboard tests assert the full body including `agentUsage` (feature 10): to
 `byModel`, `byRole` and the top-10 `agentUsage.topProjects` ranking over seeded `agent_runs`, the
 exclusion of soft-deleted runs and projects, and the empty `agentUsage` value when no counted run
 exists.
+The features-by-status tests (feature 11) assert the exact list for each of the six statuses across
+projects (soft-deleted features/projects and superseded features excluded, ordered by slug then
+feature number), `200 []` when nothing matches, and `400` for a missing, empty, unknown,
+`superseded` or camelCase status.
 
 Auth modes (feature 5, `local_auth_mode`) are covered by `tests/auth.rs`: `GET /api/auth/mode` in
 both modes, `POST /api/auth/login` in local mode (token claims, identical `401` for a wrong password

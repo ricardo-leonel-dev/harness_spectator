@@ -11,12 +11,14 @@ mod common;
 
 use common::{build_test_app, make_token, valid_token, TEST_JWT_SECRET};
 use harness_frontend_backend::harness::reader::{
-    list_projects, read_dashboard, read_feature_agent_usage, read_feature_log, read_project_state,
+    list_projects, read_dashboard, read_feature_agent_usage, read_feature_log,
+    read_features_by_status, read_project_state,
 };
 
 const OTHER_JWT_SECRET: &str = "other-jwt-secret-not-valid";
 const PROJECTS_PATH: &str = "/api/harness/projects";
 const DASHBOARD_PATH: &str = "/api/harness/dashboard";
+const FEATURES_PATH: &str = "/api/harness/features";
 
 async fn seed_features_with_statuses(
     pool: &PgPool,
@@ -713,6 +715,7 @@ async fn harness_endpoints_return_401_without_a_valid_token(pool: PgPool) {
         log_path("test-project", "first_feat"),
         agent_usage_path("test-project", "first_feat"),
         DASHBOARD_PATH.to_string(),
+        format!("{FEATURES_PATH}?status=done"),
     ] {
         for (case, token) in unauthorized_cases() {
             let (status, body) = get(pool.clone(), &uri, token).await;
@@ -791,6 +794,11 @@ async fn reader_performs_only_select_queries(pool: PgPool) -> sqlx::Result<()> {
         .await
         .expect("read_feature_agent_usage should succeed on a read-only connection");
     assert_eq!(usage.runs.len(), 1);
+
+    let blocked = read_features_by_status(&read_only_pool, "blocked")
+        .await
+        .expect("read_features_by_status should succeed on a read-only connection");
+    assert_eq!(blocked.len(), 1);
 
     read_only_pool.close().await;
     Ok(())
@@ -2895,4 +2903,100 @@ async fn test_schema_reproduces_toolkit_agent_runs(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(active, 1);
+}
+
+fn listed(slug: &str, name: &str, status: &str) -> Value {
+    json!({
+        "projectSlug": slug,
+        "name": name,
+        "title": format!("Title of {name}"),
+        "status": status,
+    })
+}
+
+/// `alpha` gets two live features per status (except `in_progress`, which the
+/// schema caps at one per project), inserted out of `feature_number` order.
+#[sqlx::test]
+async fn features_by_status_filters_each_status_across_projects(pool: PgPool) {
+    let statuses = [
+        "pending",
+        "spec_drafting",
+        "spec_ready",
+        "in_progress",
+        "blocked",
+        "done",
+    ];
+    let beta = seed_project(&pool, "beta", None, false).await;
+    let alpha = seed_project(&pool, "alpha", None, false).await;
+    let ghost = seed_project(&pool, "ghost", None, true).await;
+    for (i, status) in statuses.iter().enumerate() {
+        let n = i as i32 * 10;
+        let beta_name = format!("beta-{status}");
+        seed_feature(&pool, beta, n + 1, &beta_name, status, false, false).await;
+        if *status != "in_progress" {
+            let second = format!("alpha-{status}-2");
+            seed_feature(&pool, alpha, n + 2, &second, status, false, false).await;
+        }
+        let first = format!("alpha-{status}-1");
+        seed_feature(&pool, alpha, n + 1, &first, status, false, false).await;
+        let gone = format!("alpha-{status}-gone");
+        seed_feature(&pool, alpha, n + 3, &gone, status, false, true).await;
+        let ghost_name = format!("ghost-{status}");
+        seed_feature(&pool, ghost, n + 1, &ghost_name, status, false, false).await;
+    }
+    seed_feature(
+        &pool,
+        alpha,
+        99,
+        "alpha-superseded",
+        "superseded",
+        false,
+        false,
+    )
+    .await;
+
+    for status in statuses {
+        let mut expected = vec![listed("alpha", &format!("alpha-{status}-1"), status)];
+        if status != "in_progress" {
+            expected.push(listed("alpha", &format!("alpha-{status}-2"), status));
+        }
+        expected.push(listed("beta", &format!("beta-{status}"), status));
+
+        let uri = format!("{FEATURES_PATH}?status={status}");
+        let (code, body) = get(pool.clone(), &uri, Some(valid_token())).await;
+        assert_eq!(code, StatusCode::OK, "{status}");
+        assert_eq!(body, Value::Array(expected), "{status}");
+    }
+}
+
+#[sqlx::test]
+async fn features_by_status_returns_empty_list_when_nothing_matches(pool: PgPool) {
+    let project = seed_project(&pool, "alpha", None, false).await;
+    seed_feature(&pool, project, 1, "only_done", "done", false, false).await;
+    seed_feature(&pool, project, 2, "deleted_blocked", "blocked", false, true).await;
+
+    let uri = format!("{FEATURES_PATH}?status=blocked");
+    let (code, body) = get(pool, &uri, Some(valid_token())).await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(body, json!([]));
+}
+
+#[sqlx::test]
+async fn features_by_status_rejects_missing_or_invalid_status(pool: PgPool) {
+    let project = seed_project(&pool, "alpha", None, false).await;
+    seed_feature(&pool, project, 1, "old", "superseded", false, false).await;
+
+    for uri in [
+        FEATURES_PATH.to_string(),
+        format!("{FEATURES_PATH}?status="),
+        format!("{FEATURES_PATH}?status=bogus"),
+        format!("{FEATURES_PATH}?status=superseded"),
+        format!("{FEATURES_PATH}?status=inProgress"),
+        format!("{FEATURES_PATH}?status=DONE"),
+        format!("{FEATURES_PATH}?status=done%27%20OR%201=1"),
+    ] {
+        let (code, body) = get(pool.clone(), &uri, Some(valid_token())).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(body, json!({ "error": "bad request" }), "{uri}");
+    }
 }
