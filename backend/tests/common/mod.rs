@@ -2,14 +2,18 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use argon2::password_hash::PasswordHasher;
 use argon2::{Algorithm, Argon2, Params, Version};
 use axum::Router;
 use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
+use sqlx::migrate::Migrator;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{Connection, Executor, PgConnection, PgPool};
 
 use harness_frontend_backend::app::build_app;
 use harness_frontend_backend::auth::jwt::Claims;
@@ -120,4 +124,109 @@ pub fn make_local_token(secret: &str, exp_offset: i64, aud: &str, iss: &str) -> 
         &EncodingKey::from_secret(secret.as_bytes()),
     )
     .unwrap()
+}
+
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+static NEXT_TEST_DB: AtomicU64 = AtomicU64::new(0);
+
+/// A throwaway, fully migrated Postgres database owned by one test.
+///
+/// Replaces `#[sqlx::test]`, whose sqlx 0.9 implementation names every test
+/// database `_sqlx_test_<hash of the test path>`. That name is the same in
+/// every process, so two `cargo test` runs against the same `DATABASE_URL`
+/// (an implementer and a reviewer, or two worktrees) collide on it: the second
+/// run fails with a duplicate key on `_sqlx_test.databases` or
+/// `pg_database`, or drops the first run's database. The name here combines
+/// the process id, a per-process counter and the clock, so it is unique per
+/// test invocation rather than per test path.
+///
+/// Dropping the value drops the database `WITH (FORCE)`, which also closes
+/// connections still held by the test (for example a cloned pool inside the
+/// app under test). Cleanup runs on a separate thread because `Drop` executes
+/// inside the test's Tokio runtime.
+pub struct TestDb {
+    pool: PgPool,
+    name: String,
+    admin_url: String,
+}
+
+impl TestDb {
+    pub async fn new() -> TestDb {
+        let admin_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before UNIX epoch")
+            .as_nanos();
+        let name = format!(
+            "_harness_test_{}_{}_{}",
+            std::process::id(),
+            NEXT_TEST_DB.fetch_add(1, Ordering::Relaxed),
+            nanos
+        );
+
+        let mut admin = PgConnection::connect(&admin_url)
+            .await
+            .expect("connect to DATABASE_URL");
+        admin
+            .execute(sqlx::AssertSqlSafe(format!("create database \"{name}\"")))
+            .await
+            .expect("create test database");
+        admin.close().await.ok();
+
+        let options = PgConnectOptions::from_str(&admin_url)
+            .expect("parse DATABASE_URL")
+            .database(&name);
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect_with(options)
+            .await
+            .expect("connect to test database");
+        MIGRATOR.run(&pool).await.expect("apply migrations");
+
+        TestDb {
+            pool,
+            name,
+            admin_url,
+        }
+    }
+
+    pub fn pool(&self) -> PgPool {
+        self.pool.clone()
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl Drop for TestDb {
+    fn drop(&mut self) {
+        let name = self.name.clone();
+        let admin_url = self.admin_url.clone();
+        let result = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| err.to_string())?;
+            runtime.block_on(async move {
+                let mut admin = PgConnection::connect(&admin_url)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                admin
+                    .execute(sqlx::AssertSqlSafe(format!(
+                        "drop database if exists \"{name}\" with (force)"
+                    )))
+                    .await
+                    .map_err(|err| err.to_string())?;
+                admin.close().await.ok();
+                Ok::<(), String>(())
+            })
+        })
+        .join();
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => eprintln!("failed to drop test database {}: {err}", self.name),
+            Err(_) => eprintln!("cleanup thread for test database {} panicked", self.name),
+        }
+    }
 }

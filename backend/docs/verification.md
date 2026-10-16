@@ -21,15 +21,20 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo build &&
 This is what `.harness.json`'s `verify_command` is set to (plus a `DATABASE_URL` default) —
 `init.sh` runs it before allowing a session to close.
 
-**`cargo test` needs a running PostgreSQL server.** Every test that touches the database uses
-`#[sqlx::test]`, which provisions an ephemeral database per test from `DATABASE_URL`. This is a
+**`cargo test` needs a running PostgreSQL server.** Every test that touches the database creates a
+`common::TestDb` (`tests/common/mod.rs`), which provisions an ephemeral, migrated database per test
+from `DATABASE_URL` and drops it afterwards. Database names are unique per invocation (process id,
+counter, clock), so concurrent `cargo test` runs against the same server (implementer and reviewer,
+or two worktrees) do not collide. `#[sqlx::test]` is not used: sqlx 0.9 derives the database name
+from the test path alone, which made concurrent runs fail with a duplicate `databases_pkey` /
+`pg_database_datname_index` key (feature 12). This is a
 pre-existing environment precondition, not something any one feature introduced: if Postgres is
 not running, the failure is an environment problem to fix, not a regression to debug in the code.
 
 ### Level 2 — Integration Test (if this project has a user-facing surface)
 
 An `axum`-native integration test (`tower::ServiceExt::oneshot` against the real router built by
-`build_app`, no mocking of the app itself) run against a throwaway `sqlx::test` Postgres schema:
+`build_app`, no mocking of the app itself) run against a throwaway `TestDb` Postgres database:
 `GET /api/harness/projects`, `GET /api/harness/projects/{slug}/state`,
 `GET /api/harness/projects/{slug}/features/{name}/log`,
 `GET /api/harness/projects/{slug}/features/{name}/agent-usage`, `GET /api/harness/dashboard` and

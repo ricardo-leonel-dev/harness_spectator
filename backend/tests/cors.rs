@@ -17,7 +17,7 @@ use tower::ServiceExt;
 mod common;
 
 use common::{
-    build_test_app, build_test_app_with, build_test_config_local, lazy_pool, valid_token,
+    build_test_app, build_test_app_with, build_test_config_local, lazy_pool, valid_token, TestDb,
     TEST_FRONTEND_ORIGIN,
 };
 
@@ -29,8 +29,10 @@ const PATH: &str = "/api/harness/projects";
 /// `FRONTEND_ORIGIN`, `Allow-Methods` listing exactly the configured methods
 /// (`GET` and `POST`, R37), and `Allow-Headers` listing exactly the two
 /// configured request headers (`authorization` and `content-type`, R37).
-#[sqlx::test]
-async fn preflight_options_returns_204_with_expected_cors_headers(pool: sqlx::PgPool) {
+#[tokio::test]
+async fn preflight_options_returns_204_with_expected_cors_headers() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let app = build_test_app(pool).await;
 
     let req = Request::builder()
@@ -157,8 +159,10 @@ async fn login_preflight_allows_post_and_content_type() {
 /// `Access-Control-Allow-Origin` — the browser reads it on the actual
 /// response, not just on the preflight, and the value must equal the
 /// configured `FRONTEND_ORIGIN` (no drift, no `*` wildcard, no `null`).
-#[sqlx::test]
-async fn non_preflight_get_carries_allow_origin(pool: sqlx::PgPool) {
+#[tokio::test]
+async fn non_preflight_get_carries_allow_origin() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let app = build_test_app(pool).await;
 
     let req = Request::builder()
@@ -210,8 +214,10 @@ async fn non_preflight_get_carries_allow_origin(pool: sqlx::PgPool) {
 /// header silently because nothing in `backend/tests/` asserted it; this
 /// test exists so the next bump that flips it back (intentional or
 /// accidental) fails loudly here.
-#[sqlx::test]
-async fn preflight_does_not_emit_vary_for_constant_config(pool: sqlx::PgPool) {
+#[tokio::test]
+async fn preflight_does_not_emit_vary_for_constant_config() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let app = build_test_app(pool).await;
 
     let req = Request::builder()

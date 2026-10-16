@@ -229,7 +229,7 @@ project is chosen per request by slug (there is no configured `PROJECT_SLUG`). R
 
 `migrations/0001_harness_schema.sql` is a test-only reproduction of the mirror tables and enum the
 reader uses, and `migrations/0002_agent_runs.sql` reproduces the toolkit's `0004_agent_runs.sql`
-verbatim (table, indexes, `active_agent_runs` view); both are applied by `#[sqlx::test]` and never
+verbatim (table, indexes, `active_agent_runs` view); both are applied by the tests' `TestDb` helper and never
 run against the mirror.
 
 The agent-usage route reads `agent_runs` directly over `DATABASE_URL`, like every other route, so
