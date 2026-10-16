@@ -69,8 +69,9 @@ Supabase is already the target data platform.
      (Angular signal-based session state), and the functional `authGuard` that gates the
      harness-state dashboard behind a valid Supabase session.
    - `src/app/dashboard/` — components that render harness state (features table with
-     selectable rows, open session card, blocked features card, process log card, the
-     cross-project progress overview at `/`) fetched via `src/app/core/`.
+     selectable rows, open session card, blocked features card, process log card with its
+     nested agent usage section, the cross-project progress overview at `/`) fetched via
+     `src/app/core/`.
    - `src/app/core/` — the `HarnessApiService` (the only place that calls Angular's
      `HttpClient` against the backend) and the `authInterceptor` that attaches the Supabase access
      token as `Authorization: Bearer <token>` to outgoing requests and signs the user out
@@ -166,6 +167,7 @@ browser
           GET /api/harness/dashboard                       (cross-project overview at /)
           GET /api/harness/projects/{slug}/state
           GET /api/harness/projects/{slug}/features/{name}/log
+          GET /api/harness/projects/{slug}/features/{name}/agent-usage
   <- JSON response
   -> HarnessApiService
   -> Angular components (src/app/dashboard/)

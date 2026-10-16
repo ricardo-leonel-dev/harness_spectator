@@ -3,6 +3,7 @@ import { LucideAngularModule, ScrollText } from 'lucide-angular';
 
 import { FeatureLogResponse, ProcessLogSession } from '../core/harness-api.service';
 import { LifecycleTrackComponent } from './lifecycle-track.component';
+import { AgentUsageSectionComponent, AgentUsageState } from './agent-usage-section.component';
 
 export type ProcessLogState =
   | { kind: 'idle' }
@@ -27,7 +28,7 @@ const STATE_NODE: Record<SessionState, string> = {
 
 @Component({
   selector: 'app-process-log-card',
-  imports: [LucideAngularModule, LifecycleTrackComponent],
+  imports: [LucideAngularModule, LifecycleTrackComponent, AgentUsageSectionComponent],
   providers: [LucideAngularModule.pick({ ScrollText }).providers ?? []],
   template: `
     <section class="min-w-0 rounded-md border border-line bg-panel p-3.5">
@@ -95,6 +96,8 @@ const STATE_NODE: Record<SessionState, string> = {
             <app-lifecycle-track [status]="feature.status" [pulse]="false" />
           </div>
         </div>
+
+        <app-agent-usage-section [state]="usage" [featureName]="feature.name" />
 
         <div class="mt-3 border-t border-edge pt-3">
           @if (state.log.sessions.length === 0) {
@@ -245,6 +248,7 @@ const STATE_NODE: Record<SessionState, string> = {
 })
 export class ProcessLogCardComponent {
   @Input({ required: true }) state: ProcessLogState = { kind: 'idle' };
+  @Input() usage: AgentUsageState = { kind: 'idle' };
 
   idLabel(featureNumber: number): string {
     return String(featureNumber).padStart(2, '0');

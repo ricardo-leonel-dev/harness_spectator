@@ -85,6 +85,50 @@ export interface DashboardResponse {
   topProjects: Array<{ slug: string; done: number; total: number; percentage: number }>;
 }
 
+export interface AgentRunTokens {
+  input: number | null;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+  output: number | null;
+  reasoning: number | null;
+  total: number | null;
+}
+
+export interface AgentRunNode {
+  externalId: string;
+  parentExternalId: string | null;
+  runtime: string;
+  role: string | null;
+  label: string | null;
+  model: string | null;
+  spawnDepth: number | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationSeconds: number | null;
+  tokens: AgentRunTokens;
+  children: AgentRunNode[];
+}
+
+export interface TokenTotals {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+  reasoning: number;
+  total: number;
+}
+
+export interface AgentUsageTotals {
+  effortSeconds: number;
+  unionSeconds: number;
+  tokens: TokenTotals;
+}
+
+export interface AgentUsageResponse {
+  runs: AgentRunNode[];
+  totals: AgentUsageTotals;
+}
+
 @Injectable({ providedIn: 'root' })
 export class HarnessApiService {
   private readonly http = inject(HttpClient);
@@ -107,6 +151,12 @@ export class HarnessApiService {
 
   getDashboard(): Observable<DashboardResponse> {
     return this.http.get<DashboardResponse>(`${environment.apiBaseUrl}/api/harness/dashboard`);
+  }
+
+  getFeatureAgentUsage(slug: string, name: string): Observable<AgentUsageResponse> {
+    return this.http.get<AgentUsageResponse>(
+      `${environment.apiBaseUrl}/api/harness/projects/${encodeURIComponent(slug)}/features/${encodeURIComponent(name)}/agent-usage`,
+    );
   }
 
   getAuthMode(): Observable<AuthModeResponse> {
