@@ -88,7 +88,8 @@ migrated.
      stdin and prints its argon2id PHC hash for `LOCAL_AUTH_USERS`. Reads no environment.
    - `src/harness/` — the read-only Postgres reader (`sqlx` queries) and the
      `/api/harness/projects`, `/api/harness/projects/{slug}/state`,
-     `/api/harness/projects/{slug}/features/{name}/log` and `/api/harness/dashboard`
+     `/api/harness/projects/{slug}/features/{name}/log`,
+     `/api/harness/projects/{slug}/features/{name}/agent-usage` and `/api/harness/dashboard`
      routes.
    - `src/config.rs` — the only place environment variables are read.
    Don't let implementers introduce additional top-level layers without updating this file first.
@@ -145,6 +146,22 @@ frontend (separate project/process)
           ordered by `created_at` ascending (ties broken by `session_log_entries.id`).
           Identical `{ "error": "not found" }` envelope for unknown-project and
           unknown-feature so the frontend does not have to distinguish the two.
+        - GET /api/harness/projects/{slug}/features/{name}/agent-usage (feature 9:
+          `feature_agent_usage_api`): {runs, totals} for that feature from `agent_runs`.
+          Same project/feature resolution and `{ "error": "not found" }` 404s as the log
+          route. `runs` is a nested tree of run nodes `{externalId, parentExternalId,
+          runtime, role (agent_role), label, model, spawnDepth, startedAt, finishedAt,
+          durationSeconds, tokens: {input, cacheRead, cacheWrite, output, reasoning, total},
+          children}`; every nullable key is always present (`null`). A run's parent is the
+          non-deleted run of the same feature with the same `runtime` and
+          `external_id = parent_external_id`; runs with no such parent (or a self-parent)
+          are top-level; a parent cycle is broken at its earliest run. Every array is in
+          run order (`started_at` ascending, nulls last, ties by `agent_runs.id`).
+          `spawnDepth` is the stored value, never recomputed from tree position. `totals`
+          is `{effortSeconds (sum of duration_seconds), unionSeconds (union of
+          [started_at, finished_at] intervals, overlaps counted once), tokens (per-category
+          sums of the stored columns, 0 when nothing is summable)}`. A feature with no runs
+          answers `200` with `runs: []` and zero totals.
         - GET /api/harness/dashboard: aggregate progress across every project in the
           mirror — `{overall, topProjects}`. `overall` carries `{done, total,
           percentage, byStatus}` where `byStatus` is zero-filled across the six
@@ -174,7 +191,7 @@ adds them, the route gains the keys additively rather than changing shape.
 
 The reader targets the shared Postgres mirror every harness project syncs into; its authoritative
 DDL is the toolkit's `db/schema.postgres.sql` plus `db/migrations/0001_sdd.sql`,
-`0002_superseded.sql` and `0003_paused_sessions.sql`. This backend never changes that schema. The
+`0002_superseded.sql`, `0003_paused_sessions.sql` and `0004_agent_runs.sql`. This backend never changes that schema. The
 project is chosen per request by slug (there is no configured `PROJECT_SLUG`). Reader rules:
 
 - `features.status` is the `feature_status` enum and is read as text (`status::text`); ids are
@@ -187,7 +204,16 @@ project is chosen per request by slug (there is no configured `PROJECT_SLUG`). R
 - Counts on `/api/harness/projects` are over non-deleted features (`total` includes every status).
 
 `migrations/0001_harness_schema.sql` is a test-only reproduction of the mirror tables and enum the
-reader uses, applied by `#[sqlx::test]`; it is never run against the mirror.
+reader uses, and `migrations/0002_agent_runs.sql` reproduces the toolkit's `0004_agent_runs.sql`
+verbatim (table, indexes, `active_agent_runs` view); both are applied by `#[sqlx::test]` and never
+run against the mirror.
+
+The agent-usage route reads `agent_runs` directly over `DATABASE_URL`, like every other route, so
+serving data depends on the toolkit's `db/migrations/0004_agent_runs.sql` (the table) and
+`db/rpc/upsert_agent_run.sql` (the RPC `sync_postgres.sh` uses to fill it) being applied to the
+target mirror. Without the table the route answers `500 {"error":"internal error"}` (the other
+routes are unaffected); with the table but no RPC it answers `200` with no runs. The read-only role
+behind `DATABASE_URL` needs `SELECT` on `agent_runs`.
 
 The target database is not necessarily any particular project's own mirror — it is configured via
 the `DATABASE_URL` env var, so the same backend can point at any sibling harness project's mirrored

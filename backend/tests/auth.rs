@@ -344,3 +344,34 @@ async fn local_mode_rejects_missing_token_on_dashboard() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body, br#"{"error":"unauthorized"}"#);
 }
+
+const AGENT_USAGE_PATH: &str = "/api/harness/projects/test-project/features/first_feat/agent-usage";
+
+async fn send_agent_usage_request(app: Router, token: Option<&str>) -> (StatusCode, Vec<u8>) {
+    let mut builder = Request::builder().method(Method::GET).uri(AGENT_USAGE_PATH);
+    if let Some(token) = token {
+        builder = builder.header("Authorization", format!("Bearer {token}"));
+    }
+    let req = builder.body(Body::empty()).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap()
+        .to_vec();
+    (status, bytes)
+}
+
+#[tokio::test]
+async fn local_mode_rejects_supabase_token_on_agent_usage() {
+    let (status, body) = send_agent_usage_request(local_app(), Some(&valid_token())).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, br#"{"error":"unauthorized"}"#);
+}
+
+#[tokio::test]
+async fn local_mode_rejects_missing_token_on_agent_usage() {
+    let (status, body) = send_agent_usage_request(local_app(), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, br#"{"error":"unauthorized"}"#);
+}
