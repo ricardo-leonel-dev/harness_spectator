@@ -15,11 +15,13 @@ import { DOCUMENT, NgClass } from '@angular/common';
 import { ActivatedRoute, NavigationEnd, Router, RouterLink } from '@angular/router';
 import {
   EMPTY,
+  Observable,
   catchError,
   distinctUntilChanged,
   filter,
   map,
   of,
+  shareReplay,
   startWith,
   switchMap,
 } from 'rxjs';
@@ -27,6 +29,7 @@ import { LucideAngularModule, LogOut } from 'lucide-angular';
 
 import { AuthService } from '../auth/auth.service';
 import {
+  AgentUsageResponse,
   HarnessApiService,
   HarnessStateResponse,
   ProjectSummary,
@@ -35,6 +38,7 @@ import { BlockedFeaturesCardComponent } from './blocked-features-card.component'
 import { FeatureRowVm, FeaturesTableComponent } from './features-table.component';
 import { OpenSessionCardComponent, OpenSessionVm } from './open-session-card.component';
 import { BlockedFeatureVm } from './blocked-features-card.component';
+import { AgentUsageState } from './agent-usage-section.component';
 import { ProcessLogCardComponent, ProcessLogState } from './process-log-card.component';
 import { ProgressOverviewComponent } from './progress-overview.component';
 import { ProjectSelectorComponent } from './project-selector.component';
@@ -210,7 +214,7 @@ interface LogTarget {
           <aside class="flex min-w-0 flex-col gap-3.5">
             <app-open-session-card [session]="session()" />
             <app-blocked-features-card [features]="blocked()" />
-            <app-process-log-card [state]="processLog()" />
+            <app-process-log-card [state]="processLog()" [usage]="agentUsage()" />
           </aside>
         } @else if (slug() === null) {
           <app-progress-overview class="min-w-0 lg:col-span-2" />
@@ -261,6 +265,7 @@ export class DashboardPageComponent implements OnInit {
   readonly loggingOut = signal(false);
   readonly selectedFeature = signal<string | null>(null);
   readonly processLog = signal<ProcessLogState>({ kind: 'idle' });
+  readonly agentUsage = signal<AgentUsageState>({ kind: 'idle' });
 
   readonly activeAgents = computed(() => (this.session() ? 1 : 0));
   readonly loading = computed(() => this.stateLoading());
@@ -307,15 +312,19 @@ export class DashboardPageComponent implements OnInit {
       )
       .subscribe((result) => this.applyState(result));
 
-    this.router.events
+    const target$: Observable<LogTarget> = this.router.events.pipe(
+      filter((e) => e instanceof NavigationEnd),
+      startWith(null),
+      map((): LogTarget => ({
+        slug: this.route.snapshot.firstChild?.paramMap.get('slug') ?? null,
+        feature: this.route.snapshot.firstChild?.queryParamMap.get('feature') || null,
+      })),
+      distinctUntilChanged((a, b) => a.slug === b.slug && a.feature === b.feature),
+      shareReplay({ bufferSize: 1, refCount: true }),
+    );
+
+    target$
       .pipe(
-        filter((e) => e instanceof NavigationEnd),
-        startWith(null),
-        map((): LogTarget => ({
-          slug: this.route.snapshot.firstChild?.paramMap.get('slug') ?? null,
-          feature: this.route.snapshot.firstChild?.queryParamMap.get('feature') || null,
-        })),
-        distinctUntilChanged((a, b) => a.slug === b.slug && a.feature === b.feature),
         switchMap(({ slug, feature }) => {
           this.selectedFeature.set(slug ? feature : null);
           if (!slug || !feature) return of<ProcessLogState>({ kind: 'idle' });
@@ -328,6 +337,28 @@ export class DashboardPageComponent implements OnInit {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((state) => this.processLog.set(state));
+
+    target$
+      .pipe(
+        switchMap(({ slug, feature }) => {
+          if (!slug || !feature) return of<AgentUsageState>({ kind: 'idle' });
+          this.agentUsage.set({ kind: 'loading' });
+          return this.api.getFeatureAgentUsage(slug, feature).pipe(
+            map((usage): AgentUsageState => ({
+              kind: 'ok',
+              usage: usage as AgentUsageResponse,
+            })),
+            catchError((error: HttpErrorResponse) =>
+              of<AgentUsageState>({
+                kind: 'error',
+                message: error.message || 'Failed to load agent usage.',
+              }),
+            ),
+          );
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((state) => this.agentUsage.set(state));
   }
 
   onFeatureToggled(name: string): void {

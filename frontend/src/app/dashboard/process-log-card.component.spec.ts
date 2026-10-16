@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { FeatureLogResponse, ProcessLogSession } from '../core/harness-api.service';
+import { AgentUsageSectionComponent, AgentUsageState } from './agent-usage-section.component';
 import { ProcessLogCardComponent, ProcessLogState } from './process-log-card.component';
 
 function session(overrides: Partial<ProcessLogSession>): ProcessLogSession {
@@ -79,7 +80,7 @@ describe('ProcessLogCardComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [ProcessLogCardComponent],
+      imports: [ProcessLogCardComponent, AgentUsageSectionComponent],
     }).compileComponents();
     fixture = TestBed.createComponent(ProcessLogCardComponent);
   });
@@ -291,5 +292,53 @@ describe('ProcessLogCardComponent', () => {
         expect(el.classList).toContain('motion-reduce:animate-none');
       }
     }
+  });
+
+  it('renders the usage section between the header and sessions only when the log is ok (R8, R9, R45)', () => {
+    const nonOk: ProcessLogState[] = [
+      { kind: 'idle' },
+      { kind: 'loading', name: 'x' },
+      { kind: 'not-found', name: 'x', slug: 'demo-project' },
+      { kind: 'error', message: 'boom' },
+    ];
+    for (const state of nonOk) {
+      fixture.componentRef.setInput('state', state);
+      fixture.componentRef.setInput('usage', {
+        kind: 'ok',
+        usage: {
+          runs: [],
+          totals: {
+            effortSeconds: 0,
+            unionSeconds: 0,
+            tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0 },
+          },
+        },
+      } as AgentUsageState);
+      fixture.detectChanges();
+      const host = fixture.nativeElement as HTMLElement;
+      expect(host.querySelector('[data-usage]')).withContext(state.kind).toBeNull();
+      expect(host.querySelector('h2')?.textContent?.trim()).toBe('Process log');
+    }
+
+    fixture.componentRef.setInput('state', { kind: 'ok', log: log([session({ localId: 1 })]) });
+    fixture.componentRef.setInput('usage', { kind: 'idle' } as AgentUsageState);
+    fixture.detectChanges();
+    const okHost = fixture.nativeElement as HTMLElement;
+    const header = okHost.querySelector('[data-log-header]') as HTMLElement;
+    const usage = okHost.querySelector('[data-usage]') as HTMLElement;
+    const sessions = okHost.querySelector('[data-log-scroll]') as HTMLElement;
+    expect(usage).toBeTruthy();
+    const order = Array.from(
+      okHost.querySelectorAll('[data-log-header], [data-usage], [data-log-scroll]'),
+    ).map((e) =>
+      e.getAttribute('data-log-header') !== null
+        ? 'header'
+        : e.getAttribute('data-usage') !== null
+          ? 'usage'
+          : 'sessions',
+    );
+    expect(order).toEqual(['header', 'usage', 'sessions']);
+    expect(header.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(usage.compareDocumentPosition(sessions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

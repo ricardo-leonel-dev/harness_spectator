@@ -12,8 +12,15 @@ import { AuthService, LOCAL_SESSION_STORAGE_KEY } from '../auth/auth.service';
 import { SUPABASE_CLIENT, Supabase } from '../auth/supabase-client';
 import { LoginPageComponent } from '../auth/login-page.component';
 import { authInterceptor } from '../core/auth.interceptor';
-import { DashboardResponse, FeatureLogResponse } from '../core/harness-api.service';
+import {
+  AgentRunNode,
+  AgentUsageResponse,
+  DashboardResponse,
+  FeatureLogResponse,
+} from '../core/harness-api.service';
 import { environment } from '../../environments/environment';
+
+type AgentRunNodeFromUsage = AgentRunNode;
 
 interface HarnessStatePayload {
   project: { slug: string; description: string };
@@ -82,6 +89,77 @@ function stateUrl(slug: string): string {
 
 function logUrl(slug: string, name: string): string {
   return `${environment.apiBaseUrl}/api/harness/projects/${slug}/features/${name}/log`;
+}
+
+function usageUrl(slug: string, name: string): string {
+  return `${environment.apiBaseUrl}/api/harness/projects/${slug}/features/${name}/agent-usage`;
+}
+
+function emptyUsage(): AgentUsageResponse {
+  return {
+    runs: [],
+    totals: {
+      effortSeconds: 0,
+      unionSeconds: 0,
+      tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0 },
+    },
+  };
+}
+
+function usageTreeWithRole(opts: {
+  roleBase: string;
+  labelBase: string;
+  modelBase: string;
+  externalIdBase: string;
+}): AgentUsageResponse {
+  const makeChildren = (
+    level: number,
+    parent: string | null,
+    start: number,
+    end: number,
+  ): AgentRunNodeFromUsage => {
+    const id = `${opts.externalIdBase}-${level}`;
+    const node: AgentRunNodeFromUsage = {
+      externalId: id,
+      parentExternalId: parent,
+      runtime: 'claude',
+      role: `${opts.roleBase}-level-${level}`,
+      label: `${opts.labelBase}-label-${level}`,
+      model: `${opts.modelBase}-model-${level}`,
+      spawnDepth: level,
+      startedAt: new Date(start).toISOString(),
+      finishedAt: new Date(end).toISOString(),
+      durationSeconds: (end - start) / 1000,
+      tokens: {
+        input: 100,
+        cacheRead: 0,
+        cacheWrite: 0,
+        output: 50,
+        reasoning: null,
+        total: 150,
+      },
+      children: [],
+    };
+    if (level < 3) {
+      node.children.push(makeChildren(level + 1, id, start + 1000, end - 1000));
+    }
+    return node;
+  };
+  return {
+    runs: [
+      makeChildren(
+        0,
+        null,
+        Date.parse('2026-01-01T00:00:00+00:00'),
+        Date.parse('2026-01-01T00:01:00+00:00'),
+      ),
+    ],
+    totals: {
+      effortSeconds: 60,
+      unionSeconds: 60,
+      tokens: { input: 100, cacheRead: 0, cacheWrite: 0, output: 50, reasoning: 0, total: 150 },
+    },
+  };
 }
 
 function featureLog(
@@ -1023,6 +1101,7 @@ describe('DashboardPageComponent', () => {
       });
       expect(router.url).toBe('/projects/demo-project?feature=second');
       httpTesting.expectOne(logUrl('demo-project', 'second')).flush(featureLog('second'));
+      httpTesting.expectOne(usageUrl('demo-project', 'second')).flush(emptyUsage());
       settle(harness);
       expect(row(host, 'second').getAttribute('aria-pressed')).toBe('true');
 
@@ -1046,6 +1125,7 @@ describe('DashboardPageComponent', () => {
       expect(requests[0].request.headers.get('Authorization')).toBe('Bearer real-access-token');
       expect(card(host).querySelector('[role="status"]')?.textContent).toContain('second');
       requests[0].flush(featureLog('second'));
+      httpTesting.expectOne(usageUrl('demo-project', 'second')).flush(emptyUsage());
       settle(harness);
 
       expect(row(host, 'second').getAttribute('aria-pressed')).toBe('true');
@@ -1063,13 +1143,16 @@ describe('DashboardPageComponent', () => {
       const harness = openWithFeature('first');
       const host = harness.routeNativeElement as HTMLElement;
       const pending = httpTesting.expectOne(logUrl('demo-project', 'first'));
+      const pendingUsage = httpTesting.expectOne(usageUrl('demo-project', 'first'));
 
       row(host, 'second').click();
       settle(harness);
 
       expect(pending.cancelled).toBeTrue();
+      expect(pendingUsage.cancelled).toBeTrue();
       httpTesting.expectNone(stateUrl('demo-project'));
       httpTesting.expectOne(logUrl('demo-project', 'second')).flush(featureLog('second'));
+      httpTesting.expectOne(usageUrl('demo-project', 'second')).flush(emptyUsage());
       settle(harness);
       expect(card(host).querySelector('[data-log-feature-name]')?.textContent?.trim()).toBe(
         'second',
@@ -1081,6 +1164,7 @@ describe('DashboardPageComponent', () => {
       const harness = openWithFeature('first');
       const host = harness.routeNativeElement as HTMLElement;
       const pending = httpTesting.expectOne(logUrl('demo-project', 'first'));
+      const pendingUsage = httpTesting.expectOne(usageUrl('demo-project', 'first'));
 
       trigger(host).click();
       settle(harness);
@@ -1089,6 +1173,7 @@ describe('DashboardPageComponent', () => {
 
       expect(TestBed.inject(Router).url).toBe('/projects/other-project');
       expect(pending.cancelled).toBeTrue();
+      expect(pendingUsage.cancelled).toBeTrue();
       httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
       settle(harness);
       httpTesting.expectNone((req) => req.url.includes('/features/'));
@@ -1115,6 +1200,67 @@ describe('DashboardPageComponent', () => {
       expect(getComputedStyle(title).fontFamily).toContain('IBM Plex Mono');
     }));
 
+    it('requests the agent usage once for the selected feature and none without a selection (R3, R4, R6)', fakeAsync(() => {
+      const harness = boot('/projects/demo-project');
+      httpTesting.expectOne(PROJECTS_URL).flush(PROJECTS);
+      httpTesting.expectOne(stateUrl('demo-project')).flush(SEEDED_STATE);
+      settle(harness);
+      httpTesting.expectNone(usageUrl('demo-project', 'second'));
+      httpTesting.expectNone(usageUrl('demo-project', 'first'));
+
+      const host = harness.routeNativeElement as HTMLElement;
+      row(host, 'second').click();
+      settle(harness);
+      const logReq = httpTesting.expectOne(logUrl('demo-project', 'second'));
+      const usageReq = httpTesting.expectOne(usageUrl('demo-project', 'second'));
+      logReq.flush(featureLog('second'));
+      usageReq.flush(emptyUsage());
+      settle(harness);
+      httpTesting.expectNone(usageUrl('demo-project', 'second'));
+    }));
+
+    it('cancels the in-flight usage request when the feature or project changes (R5)', fakeAsync(() => {
+      stubMedia(true, false);
+      const harness = openWithFeature('first');
+      const host = harness.routeNativeElement as HTMLElement;
+      const pending = httpTesting.expectOne(usageUrl('demo-project', 'first'));
+      httpTesting.expectOne(logUrl('demo-project', 'first'));
+
+      row(host, 'second').click();
+      settle(harness);
+      expect(pending.cancelled).toBeTrue();
+      const logSecond = httpTesting.expectOne(logUrl('demo-project', 'second'));
+      const usageSecond = httpTesting.expectOne(usageUrl('demo-project', 'second'));
+      logSecond.flush(featureLog('second'));
+      usageSecond.flush(emptyUsage());
+      settle(harness);
+
+      trigger(host).click();
+      settle(harness);
+      (overlay().querySelector('[data-project-option="other-project"]') as HTMLElement).click();
+      settle(harness);
+      httpTesting.expectOne(stateUrl('other-project')).flush(SEEDED_STATE);
+      settle(harness);
+      httpTesting.expectNone((req) => req.url.includes('agent-usage'));
+      httpTesting.expectNone((req) => req.url.includes('features/'));
+    }));
+
+    it('keeps rendering the sessions when the agent usage request fails (R7, R12)', fakeAsync(() => {
+      stubMedia(true, false);
+      const harness = openWithFeature('second');
+      const host = harness.routeNativeElement as HTMLElement;
+      httpTesting.expectOne(logUrl('demo-project', 'second')).flush(featureLog('second'));
+      httpTesting
+        .expectOne(usageUrl('demo-project', 'second'))
+        .flush({ error: 'internal error' }, { status: 500, statusText: 'Internal Server Error' });
+      settle(harness);
+
+      const cardEl = card(host) as HTMLElement;
+      expect(cardEl.querySelector('[role="alert"]')?.textContent).toContain('[ERR]');
+      expect(cardEl.querySelector('[data-log-session]')).toBeTruthy();
+      expect(cardEl.textContent).toContain('did T1');
+    }));
+
     it('shows the not-found message for a 404 and [ERR] for a 500 inside the card', fakeAsync(() => {
       stubMedia(true, false);
       const harness = openWithFeature('ghost');
@@ -1122,6 +1268,7 @@ describe('DashboardPageComponent', () => {
       httpTesting
         .expectOne(logUrl('demo-project', 'ghost'))
         .flush({ error: 'not found' }, { status: 404, statusText: 'Not Found' });
+      httpTesting.expectOne(usageUrl('demo-project', 'ghost')).flush(emptyUsage());
       settle(harness);
 
       let alert = card(host).querySelector('[role="alert"]') as HTMLElement;
@@ -1136,6 +1283,7 @@ describe('DashboardPageComponent', () => {
       httpTesting
         .expectOne(logUrl('demo-project', 'first'))
         .flush({ error: 'boom' }, { status: 500, statusText: 'Internal Server Error' });
+      httpTesting.expectOne(usageUrl('demo-project', 'first')).flush(emptyUsage());
       settle(harness);
 
       alert = card(host).querySelector('[role="alert"]') as HTMLElement;
@@ -1161,6 +1309,7 @@ describe('DashboardPageComponent', () => {
       row(host, 'second').click();
       settle(harness);
       httpTesting.expectOne(logUrl('demo-project', 'second')).flush(featureLog('second'));
+      httpTesting.expectOne(usageUrl('demo-project', 'second')).flush(emptyUsage());
       settle(harness);
       expect(scroll).not.toHaveBeenCalled();
 
@@ -1168,6 +1317,7 @@ describe('DashboardPageComponent', () => {
       row(host, 'first').click();
       settle(harness);
       httpTesting.expectOne(logUrl('demo-project', 'first')).flush(featureLog('first'));
+      httpTesting.expectOne(usageUrl('demo-project', 'first')).flush(emptyUsage());
       settle(harness);
       expect(scroll).toHaveBeenCalledOnceWith({ behavior: 'smooth', block: 'start' });
 
@@ -1176,6 +1326,7 @@ describe('DashboardPageComponent', () => {
       row(host, 'second').click();
       settle(harness);
       httpTesting.expectOne(logUrl('demo-project', 'second')).flush(featureLog('second'));
+      httpTesting.expectOne(usageUrl('demo-project', 'second')).flush(emptyUsage());
       settle(harness);
       expect(scroll).toHaveBeenCalledOnceWith({ behavior: 'auto', block: 'start' });
     }));
@@ -1297,6 +1448,15 @@ describe('DashboardPageComponent', () => {
           },
         ],
       });
+      const runToken = 'run-role-without-any-spaces-'.repeat(4);
+      httpTesting.expectOne(usageUrl('demo-project', name)).flush(
+        usageTreeWithRole({
+          roleBase: runToken,
+          labelBase: runToken,
+          modelBase: runToken,
+          externalIdBase: `${runToken}-`,
+        }),
+      );
       settle(harness);
       const host = harness.routeNativeElement as HTMLElement;
       expect(host.querySelector('app-process-log-card [data-log-session]')).toBeTruthy();

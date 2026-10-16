@@ -3,6 +3,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 
 import {
+  AgentUsageResponse,
   DashboardResponse,
   FeatureLogResponse,
   HarnessApiService,
@@ -88,6 +89,49 @@ describe('HarnessApiService', () => {
     req.flush(payload);
 
     expect(received).toEqual(payload);
+  });
+
+  it("gets one feature's agent usage, encoding slug and name", () => {
+    const usage: AgentUsageResponse = {
+      runs: [
+        {
+          externalId: 'lead-1',
+          parentExternalId: null,
+          runtime: 'claude',
+          role: 'leader',
+          label: null,
+          model: null,
+          spawnDepth: 0,
+          startedAt: '2026-01-01T00:00:00+00:00',
+          finishedAt: '2026-01-01T00:01:40+00:00',
+          durationSeconds: 100,
+          tokens: {
+            input: 10,
+            cacheRead: 0,
+            cacheWrite: 0,
+            output: 5,
+            reasoning: null,
+            total: 15,
+          },
+          children: [],
+        },
+      ],
+      totals: {
+        effortSeconds: 100,
+        unionSeconds: 100,
+        tokens: { input: 10, cacheRead: 0, cacheWrite: 0, output: 5, reasoning: 0, total: 15 },
+      },
+    };
+    let received: AgentUsageResponse | undefined;
+    api.getFeatureAgentUsage('team/odd slug', 'a b/c').subscribe((data) => (received = data));
+
+    const req = httpTesting.expectOne(
+      `${environment.apiBaseUrl}/api/harness/projects/team%2Fodd%20slug/features/a%20b%2Fc/agent-usage`,
+    );
+    expect(req.request.method).toBe('GET');
+    req.flush(usage);
+
+    expect(received).toEqual(usage);
   });
 
   it("gets one feature's process log, encoding slug and name", () => {
