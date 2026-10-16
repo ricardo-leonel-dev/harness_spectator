@@ -41,6 +41,10 @@ on a pool whose transactions default to read-only, including for the feature-log
 paths. The agent-usage tests seed `agent_runs` from `migrations/0002_agent_runs.sql` (never the
 mirror) and assert the full run tree and totals; `test_schema_reproduces_toolkit_agent_runs` pins
 that migration against the toolkit's `0004_agent_runs.sql` DDL via the catalog.
+The dashboard tests assert the full body including `agentUsage` (feature 10): totals, `byRuntime`,
+`byModel`, `byRole` and the top-10 `agentUsage.topProjects` ranking over seeded `agent_runs`, the
+exclusion of soft-deleted runs and projects, and the empty `agentUsage` value when no counted run
+exists.
 
 Auth modes (feature 5, `local_auth_mode`) are covered by `tests/auth.rs`: `GET /api/auth/mode` in
 both modes, `POST /api/auth/login` in local mode (token claims, identical `401` for a wrong password
@@ -71,7 +75,10 @@ the `Vary` default while every other test stayed green.
    `GET /api/harness/dashboard` and confirm the response carries an `overall` block whose
    `byStatus` totals match the mirror's countable features and a `topProjects` array whose
    entries are ordered by `done` then `percentage` (descending) then `slug` (ascending), with
-   every returned slug resolving on `/api/harness/projects/<slug>/state` (200, not 404).
+   every returned slug resolving on `/api/harness/projects/<slug>/state` (200, not 404), and an
+   `agentUsage` block whose `runs` / `tokens.total` match the sum of `scripts/harness.sh stats` across
+   the mirrored projects, with `byRuntime`, `byModel`, `byRole` and `agentUsage.topProjects` ordered by
+   `tokens.total` descending (a `500` means the mirror lacks `agent_runs`).
 4. Local mode (no Supabase project needed):
    1. `read -rs PW && printf '%s\n' "$PW" | cargo run --bin hash-password` and copy the printed hash.
    2. In `.env`: `AUTH_MODE=local`, `LOCAL_AUTH_SECRET=<openssl rand -base64 48>`,

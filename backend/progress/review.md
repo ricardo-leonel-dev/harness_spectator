@@ -1,58 +1,77 @@
-# Review — feature feature_agent_usage_api (#9)
+# Review — feature 10 `dashboard_agent_usage_stats` (sdd=1, session 23)
 
 **Verdict:** APPROVED
 
+Reviewed against `specs/dashboard_agent_usage_stats/{requirements,design,tasks}.md` (R1–R19, T1–T11),
+`docs/architecture.md`, `docs/conventions.md`, `CHECKPOINTS.md`. Human-approved decisions applied:
+keep `500` when `agent_runs` is missing (OQ1), count runs whatever their feature (OQ2), no cap on
+`byModel` / `byRole` (OQ3).
+
+## Independent verification
+
+- `./init.sh` exit 0, `[OK] Environment ready`. Its `verify_command` is
+  `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo build && cargo test`
+  (DATABASE_URL default `harness_test_base`). Results: lib 36 passed (includes
+  `fold_agent_usage_groups_and_sorts`), `tests/harness.rs` 39 passed, auth 20, cors 4 + 4, bins 2;
+  0 failed. All 11 dashboard tests ran and passed in that run (7 feature-8 + 4 new). No separate
+  `cargo test` rerun: init's run covers the same inputs/environment.
+- No PostgreSQL baseline in use, so these are ordinary green tests. Mock-data workflow N/A (no
+  `postgres_schemas`).
+- `git diff -U0 tests/harness.rs | grep '^-'` shows only the file header: the two feature-8 full-body
+  tests gain only `"agentUsage": empty_agent_usage()`; the other five dashboard tests are untouched.
+- `git check-ignore` on deliverables exits 1 (none excluded).
+
+## Code review
+
+- `src/harness/reader.rs`: types match design signatures; query matches design § "Query" exactly
+  (`::float8` / `::bigint` casts, no `features` join, `p.deleted_at IS NULL AND r.deleted_at IS NULL`,
+  `SELECT` only). It runs after the unchanged feature-count query/fold/sort (diff shows no edits to
+  them). `fold_agent_usage` sums totals before `truncate(TOP_PROJECTS_LIMIT)`, accumulates effort with
+  `+=` from `0.0`, sorts by `tokens.total` desc then byte-wise `str::cmp` with `None` last
+  (`cmp_nullable_key`). No new dependency, no debug prints, no TODOs. `router.rs`, `app.rs`,
+  `migrations/`, `Cargo.toml` untouched, as the design says.
+- Unknown `runtime` is silently skipped in `byRuntime` (`_ => {}`); unreachable given the mirror
+  `CHECK` constraint. Acceptable.
+- Docs: `architecture.md` documents the `agentUsage` contract and the widened `500` blast radius;
+  `verification.md` Level 2/3 updated (T10).
+
+## Traceability (verified by reading each test)
+
+| Req | Test | Verified |
+|---|---|---|
+| R1, R2, R3 | `dashboard_with_empty_mirror_returns_zeroes`, `dashboard_aggregates_counts_across_projects`, `dashboard_agent_usage_aggregates_runs_across_projects`, `dashboard_agent_usage_is_empty_when_only_deleted_runs_exist` (full-body `assert_eq!`, exactly 3 top-level keys, exact `agentUsage` key set); 5 untouched feature-8 tests pass | yes |
+| R4, R8, R9, R11, R13 | `dashboard_agent_usage_aggregates_runs_across_projects`: full expected body matches design fixture values (5 runs, 144.75, total 2387; per runtime/model/role/project buckets incl. `null` groups) | yes |
+| R5 | same test, r4 (`deleted: true`, total 99999) excluded; `..._only_deleted_runs_exist` | yes |
+| R6 | same test, `gone` project (r7, 5000) excluded; `..._only_deleted_runs_exist` | yes |
+| R7 | r2/r6 `feature_id NULL`, r3 on `superseded` a2, r5 on soft-deleted b1 (`seed_feature(..., deleted=true)`) all counted | yes |
+| R10, R12, R15 | `dashboard_agent_usage_orders_breakdowns_and_ranking` (ties broken by key, `null` last); unit `fold_agent_usage_groups_and_sorts` (`"B"` before `"a"`, `None` after equal-total `Some`) | yes |
+| R14 | `gamma` (no runs) omitted; `p-d` with total 0 present; deleted-only case yields `[]` | yes |
+| R16 | aggregates test (2 projects, both returned); limits test | yes |
+| R17 | `dashboard_agent_usage_limits_top_projects_to_ten`: `u01`..`u10`, totals still 12 runs / 780 | yes |
+| R18 | `empty_agent_usage()` full-body asserts; unit test asserts `effortSeconds` serializes `0.0` | yes |
+| R19 | `reader_performs_only_select_queries` on `default_transaction_read_only=on` pool asserts `agent_usage.totals.runs == 1` | yes |
+
+T1–T11 are all `[x]` and each has a matching diff.
+
 ## Checkpoints
 
-- C1: [x] `.harness.json` and `harness.db` are present, the docs and CHECKPOINTS.md have no template placeholders, and `./init.sh` exited 0 when I ran it.
-- C2: [x] Only feature 9 is `in_progress`. Open session 21 belongs to this work. Every test in the suite passes, so the `done` features still pass too.
-- C3: [x] Changes are limited to `src/harness/{reader.rs,router.rs}`, `src/app.rs`, the tests, the docs and the test-only `migrations/`. There is no new dependency, layer, `ApiError` variant or CORS change. I found no `println!`, `dbg!` or TODO in the changed source. `read_feature_log` is byte-for-byte unchanged.
-- C4: [x] I checked that the new tests import and exercise the new code. `tests/harness.rs` covers it through `build_app` and calls `read_feature_agent_usage` directly. The `reader.rs` unit tests call `build_run_tree` and `union_seconds`. Integration tests use `#[sqlx::test]` against the real migrations, not mocks. I ran `./init.sh` myself and the verify command was green: fmt, clippy `-D warnings`, build, and tests (lib 35, auth 20, harness 35, binaries 4, cors 4, toolchain 2, all passing). My log is at `/private/tmp/claude-501/-Users-ricardoaguilar-Documents-Development-personal-harness-spectator-back-backend/76e2d2b3-04fa-4b56-b845-e3099524919e/scratchpad/review_init.log`. This project has no accepted PostgreSQL baseline and no `postgres_schemas`, so ordinary green tests are the bar, and the suite meets it.
-- C5: [x] (pre-logout). The new untracked files are all expected deliverables: `progress/impl_feature_agent_usage_api.md`, `progress/spec_summary_feature_agent_usage_api.md` and `specs/feature_agent_usage_api/`. Two other untracked files were already there before this session: `progress/spec_summary_dashboard_stats_api.md` (from feature 8, dated Oct 14) and `../.DS_Store`. I did not count either against this feature. Session 21 is still open, which is correct: `log-out` comes after this verdict.
-- C6: [x] All three spec files exist. R1–R26 are written in EARS form. T1–T20 are `[x]`, and each one has a matching diff or test. I checked every R<n> against the actual test (see below).
+- C1: [x] `.harness.json`, `harness.db`, docs present; `./init.sh` exit 0.
+- C2: [x] one feature `in_progress`; tests pass; session 23 reflects current work.
+- C3: [x] changes confined to the reader layer; no new dependency; no debug output/TODOs.
+- C4: [x] new unit + 4 integration tests against real Postgres via `sqlx::test`; verify command green (run by me).
+- C5: [x] for the reviewable scope: no stray temp files from this feature (`progress/spec_summary_*.md`
+  and `../.DS_Store` predate the session and are outside the change set). Log-out is pending this
+  approval and is the implementer's next step.
+- C6: [x] spec files exist; EARS `R1`–`R19`; all tasks `[x]`; every `R<n>` maps to a passing test,
+  verified directly.
 
-## Deviation 1: `migrations/` delivery (R25). Not blocking, owner decision needed
+## Required Changes
 
-What I found:
-- `backend/migrations` in this worktree is a symlink to `/Users/ricardoaguilar/Documents/Development/personal_harness_spectator/backend/migrations` (the main checkout).
-- `git check-ignore -v --no-index migrations` reports `.git/info/exclude:42:backend/migrations`. Lines 30 and 42 exclude both the directory and the symlink. These lines are in the owner's manual section, not in the `install.sh` harness-managed block.
-- Commit b512367 (Ricardo Aguilar, "chore: stop tracking harness scaffolding") deleted `backend/migrations/0001_harness_schema.sql` from git on purpose. It is described as "the backend's harness Postgres mirror migration ... local tooling, not project content". `git ls-files migrations` is empty on this branch and on main.
-- There is no CI (`.github/` does not exist).
+None.
 
-Conclusion: `0002_agent_runs.sql` and the `0001` header edit will **not** be committed or delivered with the branch. That matches the delivery policy the owner set in b512367. `0001` has been delivered the same way, untracked, for features 4–8. So this is consistent with the current policy, and I am not blocking on it. The implementer was right to leave the exclusion alone. Three consequences the owner should know about:
-1. The committed tests in `tests/harness.rs` need `agent_runs`, and `sqlx::test` embeds `./migrations` at compile time. A clean clone of the branch cannot build or run the test suite. This was already true for `0001`; this feature makes the dependency larger.
-2. Because of the symlink, the file was written straight into the main checkout's working tree. Every worktree on this machine now applies `0002`. That is additive and harmless, but it is not scoped to the branch.
-3. `docs/architecture.md` and `docs/conventions.md` describe `migrations/` as part of the project's test design, which conflicts with treating it as local tooling. If the owner wants R25 to travel with the code, the fix is to track `backend/migrations/` (remove lines 30 and 42 from `.git/info/exclude` and commit both files). That is a policy change the owner has to make, not a reviewer fix.
+## Non-blocking notes
 
-Content check: `diff` of everything from `create table` onward, between `migrations/0002_agent_runs.sql` and toolkit `git show 237fabe:db/migrations/0004_agent_runs.sql`, shows no differences. The toolkit's HEAD copy is also identical to 237fabe.
-
-## Deviations 2 and 3: accepted
-
-- `effortSeconds` uses `fold(0.0, ..)` (`reader.rs`, `agent_usage_totals`), and a comment explains why. f64 `Sum` would give `-0.0` over an empty set, and `serde_json::Value` equality would hide that. `agent_usage_with_no_runs_returns_empty_tree_and_zero_totals` compares the raw body text from `get_text` against the exact R20 string, so the test does catch the bug it is meant to catch.
-- `AgentRunDbRow` has no `id` field. The SQL still selects `id` and orders by `started_at ASC NULLS LAST, id ASC`, and sqlx `FromRow` ignores extra columns. Removing the unused field is the right way to satisfy `-D warnings`. It does not change behaviour.
-- `#![recursion_limit = "256"]` in `tests/harness.rs` is only there for the `json!` literal in the full-body test. That is acceptable.
-
-## Requirement traceability (checked against the test code)
-
-- R1: `harness_endpoints_return_401_without_a_valid_token` now includes `agent_usage_path("test-project","first_feat")`, run over every `unauthorized_cases()` entry. PASS.
-- R2: `tests/auth.rs::local_mode_rejects_{supabase,missing}_token_on_agent_usage` use `local_app()` and assert 401 with the exact body. PASS.
-- R3, R4, R5, R7, R9, R12, R16–R19: `agent_usage_returns_run_tree_and_totals` asserts the full body with `assert_eq!` against `json!`. It checks every R4/R5 key, the literal `+00:00` timestamps, the nesting lead→impl→explore with rev beside impl, and `spawnDepth` as seeded. The totals are 170.0 / 110.0 / token sums 22/2000/390/99/3/2511, and I recomputed them from the seeds. Rows are inserted in the order rev, thread-x, explore, lead, impl, so id order differs from run order. PASS.
-- R6, R13, R17, R18, R19: `agent_usage_renders_nulls_and_orders_by_start_then_id` checks the `n1` node with every key `null`, the order n2, n3, n5, n4, n1 (ties broken by id, and the test asserts `n5 < n4`), `unionSeconds` 10.0 (the inverted n3 is excluded and the identical n4/n5 are counted once), `effortSeconds` 5.0, and tokens {7, 0, ...}. PASS.
-- R8, R11: `agent_usage_breaks_parent_cycles_at_the_earliest_run` asserts `[a{children:[c,b]}]` and that each externalId appears exactly once in the serialized body. The unit test `build_run_tree_handles_orphans_and_cycles` checks the shape `x[y],root[mid[leaf],late],self,orphan,codex-child`. PASS.
-- R10: in the main test, `thread-x` has a missing parent and `lead` has a NULL parent. `agent_usage_places_runs_without_a_parent_at_root` covers a self-parent, a cross-runtime parent, a parent that is a deleted run, and a parent on another feature. All are top-level with their seeded `spawnDepth`. PASS.
-- R14, R15: `agent_usage_excludes_deleted_runs_and_other_features` seeds noisy runs that are deleted, on a sibling feature, unattributed, or on a same-named feature in a foreign project. Both the runs list and the totals equal the single live run. PASS.
-- R20: covered by the exact raw-text body test above. PASS.
-- R21: `agent_usage_for_unknown_or_deleted_project_returns_404` covers a missing slug and a deleted one. PASS.
-- R22: `agent_usage_for_unknown_or_deleted_feature_returns_404` covers missing, deleted and `Alive_feat` (case-sensitive). PASS.
-- R23: `agent_usage_does_not_cross_projects` returns 404 under project-a and 200 under project-b. PASS.
-- R24: `reader_performs_only_select_queries` calls `read_feature_agent_usage` on the read-only pool and asserts `runs.len() == 1`. PASS.
-- R25: `test_schema_reproduces_toolkit_agent_runs` checks the 24 columns (types, nullability, defaults), the 5 constraint definitions, the 5 full index definitions (built from `current_schema()`), that the view's columns equal the table's, and that the view filters out the soft-deleted row. PASS. The delivery caveat is under Deviation 1.
-- R26: `feature_log_is_unchanged_when_agent_runs_exist` compares the log body before and after seeding two runs, and checks the keys are exactly `feature` and `sessions`. PASS.
-
-## Required changes
-
-None for the code.
-
-## Owner decision (not blocking)
-
-Choose whether `backend/migrations/` should stay local-only (current policy, b512367) or be tracked so the test schema, including R25's `0002_agent_runs.sql`, ships with the branch and a clean clone can run the tests. Until it is tracked, the PR for this branch will not contain `0002_agent_runs.sql`.
+1. OQ4 (frontend consumer shape not confirmed) is still open; that belongs to
+   `dashboard_agent_usage_cards`, not this feature.
+2. Before deploying, confirm `agent_runs` exists on the target mirror, otherwise the whole dashboard
+   returns `500` (accepted by the human, documented in `docs/architecture.md`).

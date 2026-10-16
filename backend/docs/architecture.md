@@ -178,6 +178,21 @@ frontend (separate project/process)
           `GET /api/harness/projects/{slug}/state` because both routes share the
           `p.deleted_at IS NULL` filter, so the dashboard's chart entries are
           directly navigable to project detail.
+          Feature 10 (`dashboard_agent_usage_stats`) adds a third key, `agentUsage`:
+          `{runs, effortSeconds, tokens, byRuntime, byModel, byRole, topProjects}`,
+          aggregated from `agent_runs`. Every aggregate is a usage bucket `{runs,
+          effortSeconds (sum of duration_seconds, 0.0 when none), tokens: {input,
+          cacheRead, cacheWrite, output, reasoning, total}}` (integer sums of the stored
+          columns, `0` when nothing is summable). A counted run is a non-deleted
+          `agent_runs` row of a non-deleted project, whatever its feature (none,
+          soft-deleted, superseded, any status). `byRuntime` is `{claude, codex}`,
+          zero-filled; `byModel` (`{model, ...bucket}`) and `byRole` (`{role, ...bucket}`,
+          `role` = `agent_role`) have one element per distinct value (`null` is its own
+          group), ordered by `tokens.total` descending then key ascending (byte-wise,
+          `null` last). `agentUsage.topProjects` (`{slug, ...bucket}`) is at most 10
+          projects with a counted run, ordered by `tokens.total` descending then `slug`
+          ascending (byte-wise); every slug resolves on `/state` like the progress
+          ranking. With no counted run, `agentUsage` is all zero buckets and empty arrays.
   -> JSON response
 ```
 
@@ -211,9 +226,12 @@ run against the mirror.
 The agent-usage route reads `agent_runs` directly over `DATABASE_URL`, like every other route, so
 serving data depends on the toolkit's `db/migrations/0004_agent_runs.sql` (the table) and
 `db/rpc/upsert_agent_run.sql` (the RPC `sync_postgres.sh` uses to fill it) being applied to the
-target mirror. Without the table the route answers `500 {"error":"internal error"}` (the other
-routes are unaffected); with the table but no RPC it answers `200` with no runs. The read-only role
-behind `DATABASE_URL` needs `SELECT` on `agent_runs`.
+target mirror. Without the table the route answers `500 {"error":"internal error"}`; with the
+table but no RPC it answers `200` with no runs. The dashboard route reads `agent_runs` too (feature
+10, `agentUsage`), so on a mirror without the table the **whole** dashboard answers `500`, including
+its `overall` / `topProjects` progress blocks; with the table but no RPC `agentUsage` is the empty
+value. The other routes are unaffected. The read-only role behind `DATABASE_URL` needs `SELECT` on
+`agent_runs`.
 
 The target database is not necessarily any particular project's own mirror — it is configured via
 the `DATABASE_URL` env var, so the same backend can point at any sibling harness project's mirrored
