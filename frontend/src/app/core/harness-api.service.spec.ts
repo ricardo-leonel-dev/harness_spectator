@@ -2,7 +2,13 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 
-import { HarnessApiService, ProjectSummary } from './harness-api.service';
+import {
+  AgentUsageResponse,
+  DashboardResponse,
+  FeatureLogResponse,
+  HarnessApiService,
+  ProjectSummary,
+} from './harness-api.service';
 import { environment } from '../../environments/environment';
 
 describe('HarnessApiService', () => {
@@ -56,5 +62,114 @@ describe('HarnessApiService', () => {
       .expectOne(`${environment.apiBaseUrl}/api/harness/projects/nope/state`)
       .flush({ error: 'not found' }, { status: 404, statusText: 'Not Found' });
     expect(status).toBe(404);
+  });
+
+  it('gets the cross-project dashboard from GET /api/harness/dashboard', () => {
+    const payload: DashboardResponse = {
+      overall: {
+        done: 31,
+        total: 52,
+        percentage: 59.62,
+        byStatus: {
+          pending: 12,
+          specDrafting: 1,
+          specReady: 2,
+          inProgress: 3,
+          blocked: 3,
+          done: 31,
+        },
+      },
+      topProjects: [{ slug: 'spectator_backend', done: 7, total: 8, percentage: 87.5 }],
+    };
+    let received: DashboardResponse | undefined;
+    api.getDashboard().subscribe((data) => (received = data));
+
+    const req = httpTesting.expectOne(`${environment.apiBaseUrl}/api/harness/dashboard`);
+    expect(req.request.method).toBe('GET');
+    req.flush(payload);
+
+    expect(received).toEqual(payload);
+  });
+
+  it("gets one feature's agent usage, encoding slug and name", () => {
+    const usage: AgentUsageResponse = {
+      runs: [
+        {
+          externalId: 'lead-1',
+          parentExternalId: null,
+          runtime: 'claude',
+          role: 'leader',
+          label: null,
+          model: null,
+          spawnDepth: 0,
+          startedAt: '2026-01-01T00:00:00+00:00',
+          finishedAt: '2026-01-01T00:01:40+00:00',
+          durationSeconds: 100,
+          tokens: {
+            input: 10,
+            cacheRead: 0,
+            cacheWrite: 0,
+            output: 5,
+            reasoning: null,
+            total: 15,
+          },
+          children: [],
+        },
+      ],
+      totals: {
+        effortSeconds: 100,
+        unionSeconds: 100,
+        tokens: { input: 10, cacheRead: 0, cacheWrite: 0, output: 5, reasoning: 0, total: 15 },
+      },
+    };
+    let received: AgentUsageResponse | undefined;
+    api.getFeatureAgentUsage('team/odd slug', 'a b/c').subscribe((data) => (received = data));
+
+    const req = httpTesting.expectOne(
+      `${environment.apiBaseUrl}/api/harness/projects/team%2Fodd%20slug/features/a%20b%2Fc/agent-usage`,
+    );
+    expect(req.request.method).toBe('GET');
+    req.flush(usage);
+
+    expect(received).toEqual(usage);
+  });
+
+  it("gets one feature's process log, encoding slug and name", () => {
+    const payload: FeatureLogResponse = {
+      feature: {
+        featureNumber: 7,
+        name: 'a b/c',
+        title: 'Show the log',
+        status: 'in_progress',
+        sdd: true,
+        description: null,
+        acceptance: ['one'],
+      },
+      sessions: [
+        {
+          localId: 3,
+          agent: 'implementer',
+          startedAt: '2026-10-14T06:30:00+00:00',
+          closedAt: null,
+          pausedAt: null,
+          plan: ['step'],
+          nextStep: null,
+          changes: null,
+          verification: null,
+          closure: null,
+          entries: [{ entry: 'did it', createdAt: '2026-10-14T06:31:00+00:00' }],
+        },
+      ],
+    };
+    let received: FeatureLogResponse | undefined;
+    api.getFeatureLog('team/odd slug', 'a b/c').subscribe((log) => (received = log));
+
+    const req = httpTesting.expectOne(
+      `${environment.apiBaseUrl}/api/harness/projects/team%2Fodd%20slug/features/a%20b%2Fc/log`,
+    );
+    expect(req.request.method).toBe('GET');
+    req.flush(payload);
+
+    expect(received).toEqual(payload);
   });
 });

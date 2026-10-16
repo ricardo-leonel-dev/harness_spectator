@@ -6,6 +6,7 @@ import {
 } from '@angular/core';
 import { provideHttpClient, withInterceptors, withXhr } from '@angular/common/http';
 import { provideRouter } from '@angular/router';
+import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 
 import { routes } from './app.routes';
 import { AuthService } from './auth/auth.service';
@@ -17,6 +18,7 @@ export const appConfig: ApplicationConfig = {
     provideZoneChangeDetection({ eventCoalescing: true }),
     provideRouter(routes),
     provideHttpClient(withXhr(), withInterceptors([authInterceptor])),
+    provideAnimationsAsync(),
     { provide: SUPABASE_CLIENT, useFactory: buildSupabaseClient },
     provideAppInitializer(() => inject(AuthService).init()),
   ],

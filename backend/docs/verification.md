@@ -21,19 +21,40 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo build &&
 This is what `.harness.json`'s `verify_command` is set to (plus a `DATABASE_URL` default) —
 `init.sh` runs it before allowing a session to close.
 
-**`cargo test` needs a running PostgreSQL server.** Every test that touches the database uses
-`#[sqlx::test]`, which provisions an ephemeral database per test from `DATABASE_URL`. This is a
+**`cargo test` needs a running PostgreSQL server.** Every test that touches the database creates a
+`common::TestDb` (`tests/common/mod.rs`), which provisions an ephemeral, migrated database per test
+from `DATABASE_URL` and drops it afterwards. Database names are unique per invocation (process id,
+counter, clock), so concurrent `cargo test` runs against the same server (implementer and reviewer,
+or two worktrees) do not collide. `#[sqlx::test]` is not used: sqlx 0.9 derives the database name
+from the test path alone, which made concurrent runs fail with a duplicate `databases_pkey` /
+`pg_database_datname_index` key (feature 12). This is a
 pre-existing environment precondition, not something any one feature introduced: if Postgres is
 not running, the failure is an environment problem to fix, not a regression to debug in the code.
 
 ### Level 2 — Integration Test (if this project has a user-facing surface)
 
 An `axum`-native integration test (`tower::ServiceExt::oneshot` against the real router built by
-`build_app`, no mocking of the app itself) run against a throwaway `sqlx::test` Postgres schema:
-`GET /api/harness/projects` and `GET /api/harness/projects/{slug}/state` with a validly-signed
-Supabase JWT (crafted in the test using the same test `SUPABASE_JWT_SECRET`) assert 200 and the
-seeded mirror-shaped project/feature/session data (an unknown slug asserts 404); the same requests
-with a missing, malformed, or expired JWT assert 401 with no harness data in the body.
+`build_app`, no mocking of the app itself) run against a throwaway `TestDb` Postgres database:
+`GET /api/harness/projects`, `GET /api/harness/projects/{slug}/state`,
+`GET /api/harness/projects/{slug}/features/{name}/log`,
+`GET /api/harness/projects/{slug}/features/{name}/agent-usage`, `GET /api/harness/dashboard` and
+`GET /api/harness/features?status=<status>` with a
+validly-signed Supabase JWT (crafted in the test using the same test `SUPABASE_JWT_SECRET`) assert
+200 and the seeded mirror-shaped project/feature/session data (an unknown slug or feature asserts
+404 on the per-project and per-feature endpoints); the same requests with a missing, malformed, or expired JWT assert
+401 with no harness data in the body. The reader's SELECT-only contract is independently re-checked
+on a pool whose transactions default to read-only, including for the feature-log and agent-usage
+paths. The agent-usage tests seed `agent_runs` from `migrations/0002_agent_runs.sql` (never the
+mirror) and assert the full run tree and totals; `test_schema_reproduces_toolkit_agent_runs` pins
+that migration against the toolkit's `0004_agent_runs.sql` DDL via the catalog.
+The dashboard tests assert the full body including `agentUsage` (feature 10): totals, `byRuntime`,
+`byModel`, `byRole` and the top-10 `agentUsage.topProjects` ranking over seeded `agent_runs`, the
+exclusion of soft-deleted runs and projects, and the empty `agentUsage` value when no counted run
+exists.
+The features-by-status tests (feature 11) assert the exact list for each of the six statuses across
+projects (soft-deleted features/projects and superseded features excluded, ordered by slug then
+feature number), `200 []` when nothing matches, and `400` for a missing, empty, unknown,
+`superseded` or camelCase status.
 
 Auth modes (feature 5, `local_auth_mode`) are covered by `tests/auth.rs`: `GET /api/auth/mode` in
 both modes, `POST /api/auth/login` in local mode (token claims, identical `401` for a wrong password
@@ -54,7 +75,20 @@ the `Vary` default while every other test stayed green.
    `{ "error": ... }` body carrying no harness data.
 3. Request it again with a validly-signed Supabase JWT — confirm 200 and the mirror's projects;
    then request `GET /api/harness/projects/<slug>/state` and confirm the returned feature list
-   matches `scripts/harness.sh status` run in that project.
+   matches `scripts/harness.sh status` run in that project, then
+   `GET /api/harness/projects/<slug>/features/<name>/log` and confirm the response carries a
+   `feature` header plus a `sessions` array whose sessions and entries are ordered
+   `started_at`/`created_at` ascending and exclude soft-deleted rows, then
+   `GET /api/harness/projects/<slug>/features/<name>/agent-usage` and confirm `runs` nests each
+   subagent under its parent run (top-level runs ordered by `startedAt`) and `totals` matches
+   `scripts/harness.sh stats <name>` run in that project (a `500` means the mirror lacks `agent_runs`), then
+   `GET /api/harness/dashboard` and confirm the response carries an `overall` block whose
+   `byStatus` totals match the mirror's countable features and a `topProjects` array whose
+   entries are ordered by `done` then `percentage` (descending) then `slug` (ascending), with
+   every returned slug resolving on `/api/harness/projects/<slug>/state` (200, not 404), and an
+   `agentUsage` block whose `runs` / `tokens.total` match the sum of `scripts/harness.sh stats` across
+   the mirrored projects, with `byRuntime`, `byModel`, `byRole` and `agentUsage.topProjects` ordered by
+   `tokens.total` descending (a `500` means the mirror lacks `agent_runs`).
 4. Local mode (no Supabase project needed):
    1. `read -rs PW && printf '%s\n' "$PW" | cargo run --bin hash-password` and copy the printed hash.
    2. In `.env`: `AUTH_MODE=local`, `LOCAL_AUTH_SECRET=<openssl rand -base64 48>`,

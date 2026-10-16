@@ -3,14 +3,13 @@ use axum::http::{Method, Request, StatusCode};
 use axum::Router;
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde_json::{json, Value};
-use sqlx::PgPool;
 use tower::ServiceExt;
 
 mod common;
 
 use common::{
     build_test_app_with, build_test_config, build_test_config_local, lazy_pool, make_local_token,
-    valid_token, TEST_JWT_SECRET, TEST_LOCAL_EMAIL, TEST_LOCAL_PASSWORD, TEST_LOCAL_SECRET,
+    valid_token, TestDb, TEST_JWT_SECRET, TEST_LOCAL_EMAIL, TEST_LOCAL_PASSWORD, TEST_LOCAL_SECRET,
     TEST_LOCAL_TTL_SECS,
 };
 use harness_frontend_backend::auth::local_token::{LOCAL_TOKEN_AUDIENCE, LOCAL_TOKEN_ISSUER};
@@ -210,8 +209,10 @@ async fn refresh_and_logout_routes_do_not_exist() {
     }
 }
 
-#[sqlx::test]
-async fn local_token_from_login_reads_projects(pool: PgPool) {
+#[tokio::test]
+async fn local_token_from_login_reads_projects() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
     let app = build_test_app_with(pool, build_test_config_local());
     let (status, body) = send(
         app.clone(),
@@ -282,4 +283,96 @@ async fn supabase_mode_rejects_local_token_signed_with_supabase_secret() {
         LOCAL_TOKEN_ISSUER,
     );
     assert_projects_unauthorized(supabase_app(), &token).await;
+}
+
+const FEATURE_LOG_PATH: &str = "/api/harness/projects/test-project/features/first_feat/log";
+const DASHBOARD_PATH: &str = "/api/harness/dashboard";
+
+async fn send_log_request(app: Router, token: Option<&str>) -> (StatusCode, Vec<u8>) {
+    let mut builder = Request::builder().method(Method::GET).uri(FEATURE_LOG_PATH);
+    if let Some(token) = token {
+        builder = builder.header("Authorization", format!("Bearer {token}"));
+    }
+    let req = builder.body(Body::empty()).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap()
+        .to_vec();
+    (status, bytes)
+}
+
+#[tokio::test]
+async fn local_mode_rejects_supabase_token_on_feature_log() {
+    let (status, body) = send_log_request(local_app(), Some(&valid_token())).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, br#"{"error":"unauthorized"}"#);
+}
+
+#[tokio::test]
+async fn local_mode_rejects_missing_token_on_feature_log() {
+    let (status, body) = send_log_request(local_app(), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, br#"{"error":"unauthorized"}"#);
+}
+
+async fn send_dashboard_request(app: Router, token: Option<&str>) -> (StatusCode, Vec<u8>) {
+    let mut builder = Request::builder().method(Method::GET).uri(DASHBOARD_PATH);
+    if let Some(token) = token {
+        builder = builder.header("Authorization", format!("Bearer {token}"));
+    }
+    let req = builder.body(Body::empty()).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap()
+        .to_vec();
+    (status, bytes)
+}
+
+#[tokio::test]
+async fn local_mode_rejects_supabase_token_on_dashboard() {
+    let (status, body) = send_dashboard_request(local_app(), Some(&valid_token())).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, br#"{"error":"unauthorized"}"#);
+}
+
+#[tokio::test]
+async fn local_mode_rejects_missing_token_on_dashboard() {
+    let (status, body) = send_dashboard_request(local_app(), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, br#"{"error":"unauthorized"}"#);
+}
+
+const AGENT_USAGE_PATH: &str = "/api/harness/projects/test-project/features/first_feat/agent-usage";
+
+async fn send_agent_usage_request(app: Router, token: Option<&str>) -> (StatusCode, Vec<u8>) {
+    let mut builder = Request::builder().method(Method::GET).uri(AGENT_USAGE_PATH);
+    if let Some(token) = token {
+        builder = builder.header("Authorization", format!("Bearer {token}"));
+    }
+    let req = builder.body(Body::empty()).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap()
+        .to_vec();
+    (status, bytes)
+}
+
+#[tokio::test]
+async fn local_mode_rejects_supabase_token_on_agent_usage() {
+    let (status, body) = send_agent_usage_request(local_app(), Some(&valid_token())).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, br#"{"error":"unauthorized"}"#);
+}
+
+#[tokio::test]
+async fn local_mode_rejects_missing_token_on_agent_usage() {
+    let (status, body) = send_agent_usage_request(local_app(), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, br#"{"error":"unauthorized"}"#);
 }

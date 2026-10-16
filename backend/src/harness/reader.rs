@@ -1,4 +1,7 @@
-use chrono::{DateTime, Utc};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap};
+
+use chrono::{DateTime, TimeDelta, Utc};
 use serde::Serialize;
 use sqlx::FromRow;
 use sqlx::PgPool;
@@ -240,4 +243,1044 @@ pub async fn read_project_state(
         open_session: open_session.map(Into::into),
         blocked_features: blocked_features.into_iter().map(Into::into).collect(),
     })
+}
+
+#[derive(Debug, Serialize)]
+pub struct FeatureLogResponse {
+    pub feature: FeatureHeader,
+    pub sessions: Vec<ProcessLogSession>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FeatureHeader {
+    #[serde(rename = "featureNumber")]
+    pub feature_number: i32,
+    pub name: String,
+    pub title: String,
+    pub status: String,
+    pub sdd: bool,
+    pub description: Option<String>,
+    pub acceptance: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProcessLogSession {
+    #[serde(rename = "localId")]
+    pub local_id: i64,
+    pub agent: String,
+    #[serde(rename = "startedAt")]
+    pub started_at: String,
+    #[serde(rename = "closedAt")]
+    pub closed_at: Option<String>,
+    #[serde(rename = "pausedAt")]
+    pub paused_at: Option<String>,
+    pub plan: Option<Vec<String>>,
+    #[serde(rename = "nextStep")]
+    pub next_step: Option<Vec<String>>,
+    pub changes: Option<Vec<String>>,
+    pub verification: Option<String>,
+    pub closure: Option<String>,
+    pub entries: Vec<ProcessLogEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProcessLogEntry {
+    pub entry: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+}
+
+#[derive(Debug, FromRow)]
+struct FeatureHeaderDbRow {
+    id: i64,
+    feature_number: i32,
+    name: String,
+    title: String,
+    status: String,
+    sdd: bool,
+    description: Option<String>,
+    acceptance: Vec<String>,
+}
+
+impl From<FeatureHeaderDbRow> for FeatureHeader {
+    fn from(r: FeatureHeaderDbRow) -> Self {
+        Self {
+            feature_number: r.feature_number,
+            name: r.name,
+            title: r.title,
+            status: r.status,
+            sdd: r.sdd,
+            description: r.description,
+            acceptance: r.acceptance,
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ProcessLogSessionDbRow {
+    id: i64,
+    local_id: i64,
+    agent: String,
+    started_at: DateTime<Utc>,
+    closed_at: Option<DateTime<Utc>>,
+    paused_at: Option<DateTime<Utc>>,
+    plan: Option<Vec<String>>,
+    next_step: Option<Vec<String>>,
+    changes: Option<Vec<String>>,
+    verification: Option<String>,
+    closure: Option<String>,
+}
+
+impl From<ProcessLogSessionDbRow> for ProcessLogSession {
+    fn from(r: ProcessLogSessionDbRow) -> Self {
+        Self {
+            local_id: r.local_id,
+            agent: r.agent,
+            started_at: r.started_at.to_rfc3339(),
+            closed_at: r.closed_at.map(|t| t.to_rfc3339()),
+            paused_at: r.paused_at.map(|t| t.to_rfc3339()),
+            plan: r.plan,
+            next_step: r.next_step,
+            changes: r.changes,
+            verification: r.verification,
+            closure: r.closure,
+            entries: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ProcessLogEntryDbRow {
+    session_id: i64,
+    entry: String,
+    created_at: DateTime<Utc>,
+}
+
+const TOP_PROJECTS_LIMIT: usize = 10;
+
+#[derive(Debug, Serialize)]
+pub struct DashboardResponse {
+    pub overall: OverallProgress,
+    #[serde(rename = "topProjects")]
+    pub top_projects: Vec<ProjectProgress>,
+    #[serde(rename = "agentUsage")]
+    pub agent_usage: DashboardAgentUsage,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OverallProgress {
+    pub done: i64,
+    pub total: i64,
+    pub percentage: f64,
+    #[serde(rename = "byStatus")]
+    pub by_status: StatusBreakdown,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct StatusBreakdown {
+    pub pending: i64,
+    #[serde(rename = "specDrafting")]
+    pub spec_drafting: i64,
+    #[serde(rename = "specReady")]
+    pub spec_ready: i64,
+    #[serde(rename = "inProgress")]
+    pub in_progress: i64,
+    pub blocked: i64,
+    pub done: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectProgress {
+    pub slug: String,
+    pub done: i64,
+    pub total: i64,
+    pub percentage: f64,
+}
+
+#[derive(Debug, FromRow)]
+struct ProjectStatusCountsDbRow {
+    slug: String,
+    pending: i64,
+    spec_drafting: i64,
+    spec_ready: i64,
+    in_progress: i64,
+    blocked: i64,
+    done: i64,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct UsageBucket {
+    pub runs: i64,
+    #[serde(rename = "effortSeconds")]
+    pub effort_seconds: f64,
+    pub tokens: TokenTotals,
+}
+
+impl UsageBucket {
+    fn add(&mut self, other: &UsageBucket) {
+        self.runs += other.runs;
+        self.effort_seconds += other.effort_seconds;
+        self.tokens.input += other.tokens.input;
+        self.tokens.cache_read += other.tokens.cache_read;
+        self.tokens.cache_write += other.tokens.cache_write;
+        self.tokens.output += other.tokens.output;
+        self.tokens.reasoning += other.tokens.reasoning;
+        self.tokens.total += other.tokens.total;
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct DashboardAgentUsage {
+    #[serde(flatten)]
+    pub totals: UsageBucket,
+    #[serde(rename = "byRuntime")]
+    pub by_runtime: RuntimeBreakdown,
+    #[serde(rename = "byModel")]
+    pub by_model: Vec<ModelUsage>,
+    #[serde(rename = "byRole")]
+    pub by_role: Vec<RoleUsage>,
+    #[serde(rename = "topProjects")]
+    pub top_projects: Vec<ProjectUsage>,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct RuntimeBreakdown {
+    pub claude: UsageBucket,
+    pub codex: UsageBucket,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelUsage {
+    pub model: Option<String>,
+    #[serde(flatten)]
+    pub usage: UsageBucket,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoleUsage {
+    pub role: Option<String>,
+    #[serde(flatten)]
+    pub usage: UsageBucket,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectUsage {
+    pub slug: String,
+    #[serde(flatten)]
+    pub usage: UsageBucket,
+}
+
+#[derive(Debug, FromRow)]
+struct AgentUsageGroupDbRow {
+    slug: String,
+    runtime: String,
+    model: Option<String>,
+    agent_role: Option<String>,
+    runs: i64,
+    effort_seconds: f64,
+    input_tokens: i64,
+    cache_read_tokens: i64,
+    cache_write_tokens: i64,
+    output_tokens: i64,
+    reasoning_tokens: i64,
+    total_tokens: i64,
+}
+
+/// Byte-wise ascending, `None` after every `Some`.
+fn cmp_nullable_key(a: &Option<String>, b: &Option<String>) -> Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) => a.as_str().cmp(b.as_str()),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+fn ranked_by_total<K>(
+    map: BTreeMap<K, UsageBucket>,
+    key_cmp: impl Fn(&K, &K) -> Ordering,
+) -> Vec<(K, UsageBucket)> {
+    let mut v: Vec<(K, UsageBucket)> = map.into_iter().collect();
+    v.sort_by(|(ka, a), (kb, b)| {
+        b.tokens
+            .total
+            .cmp(&a.tokens.total)
+            .then_with(|| key_cmp(ka, kb))
+    });
+    v
+}
+
+fn fold_agent_usage(rows: &[AgentUsageGroupDbRow]) -> DashboardAgentUsage {
+    let mut totals = UsageBucket::default();
+    let mut by_runtime = RuntimeBreakdown::default();
+    let mut by_model: BTreeMap<Option<String>, UsageBucket> = BTreeMap::new();
+    let mut by_role: BTreeMap<Option<String>, UsageBucket> = BTreeMap::new();
+    let mut by_slug: BTreeMap<String, UsageBucket> = BTreeMap::new();
+
+    for r in rows {
+        let bucket = UsageBucket {
+            runs: r.runs,
+            effort_seconds: r.effort_seconds,
+            tokens: TokenTotals {
+                input: r.input_tokens,
+                cache_read: r.cache_read_tokens,
+                cache_write: r.cache_write_tokens,
+                output: r.output_tokens,
+                reasoning: r.reasoning_tokens,
+                total: r.total_tokens,
+            },
+        };
+        totals.add(&bucket);
+        match r.runtime.as_str() {
+            "claude" => by_runtime.claude.add(&bucket),
+            "codex" => by_runtime.codex.add(&bucket),
+            _ => {}
+        }
+        by_model.entry(r.model.clone()).or_default().add(&bucket);
+        by_role
+            .entry(r.agent_role.clone())
+            .or_default()
+            .add(&bucket);
+        by_slug.entry(r.slug.clone()).or_default().add(&bucket);
+    }
+
+    let mut top_projects: Vec<ProjectUsage> =
+        ranked_by_total(by_slug, |a: &String, b: &String| a.as_str().cmp(b.as_str()))
+            .into_iter()
+            .map(|(slug, usage)| ProjectUsage { slug, usage })
+            .collect();
+    top_projects.truncate(TOP_PROJECTS_LIMIT);
+
+    DashboardAgentUsage {
+        totals,
+        by_runtime,
+        by_model: ranked_by_total(by_model, cmp_nullable_key)
+            .into_iter()
+            .map(|(model, usage)| ModelUsage { model, usage })
+            .collect(),
+        by_role: ranked_by_total(by_role, cmp_nullable_key)
+            .into_iter()
+            .map(|(role, usage)| RoleUsage { role, usage })
+            .collect(),
+        top_projects,
+    }
+}
+
+/// Percentage in hundredths, rounded half-up. `0` when `total == 0`.
+fn completion_hundredths(done: i64, total: i64) -> i64 {
+    if total == 0 {
+        0
+    } else {
+        (done * 20000 + total) / (2 * total)
+    }
+}
+
+pub async fn read_dashboard(pool: &PgPool) -> Result<DashboardResponse, ApiError> {
+    let rows: Vec<ProjectStatusCountsDbRow> = sqlx::query_as(
+        "SELECT p.slug,
+                COUNT(*) FILTER (WHERE f.status = 'pending')       AS pending,
+                COUNT(*) FILTER (WHERE f.status = 'spec_drafting') AS spec_drafting,
+                COUNT(*) FILTER (WHERE f.status = 'spec_ready')    AS spec_ready,
+                COUNT(*) FILTER (WHERE f.status = 'in_progress')   AS in_progress,
+                COUNT(*) FILTER (WHERE f.status = 'blocked')       AS blocked,
+                COUNT(*) FILTER (WHERE f.status = 'done')          AS done
+         FROM projects p
+         JOIN features f ON f.project_id = p.id
+         WHERE p.deleted_at IS NULL
+           AND f.deleted_at IS NULL
+           AND f.status <> 'superseded'
+         GROUP BY p.id, p.slug",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut by_status = StatusBreakdown::default();
+    let mut projects: Vec<ProjectProgress> = Vec::with_capacity(rows.len());
+
+    for r in rows {
+        by_status.pending += r.pending;
+        by_status.spec_drafting += r.spec_drafting;
+        by_status.spec_ready += r.spec_ready;
+        by_status.in_progress += r.in_progress;
+        by_status.blocked += r.blocked;
+        by_status.done += r.done;
+
+        let total = r.pending + r.spec_drafting + r.spec_ready + r.in_progress + r.blocked + r.done;
+        let hundredths = completion_hundredths(r.done, total);
+        projects.push(ProjectProgress {
+            slug: r.slug,
+            done: r.done,
+            total,
+            percentage: hundredths as f64 / 100.0,
+        });
+    }
+
+    let overall_total = by_status.pending
+        + by_status.spec_drafting
+        + by_status.spec_ready
+        + by_status.in_progress
+        + by_status.blocked
+        + by_status.done;
+    let overall_done = by_status.done;
+    let overall_hundredths = completion_hundredths(overall_done, overall_total);
+
+    projects.sort_by(|a, b| {
+        b.done
+            .cmp(&a.done)
+            .then_with(|| {
+                let bh = completion_hundredths(b.done, b.total);
+                let ah = completion_hundredths(a.done, a.total);
+                bh.cmp(&ah)
+            })
+            .then_with(|| a.slug.cmp(&b.slug))
+    });
+    projects.truncate(TOP_PROJECTS_LIMIT);
+
+    let usage_rows: Vec<AgentUsageGroupDbRow> = sqlx::query_as(
+        "SELECT p.slug,
+                r.runtime,
+                r.model,
+                r.agent_role,
+                COUNT(*)                                       AS runs,
+                COALESCE(SUM(r.duration_seconds), 0)::float8   AS effort_seconds,
+                COALESCE(SUM(r.input_tokens), 0)::bigint       AS input_tokens,
+                COALESCE(SUM(r.cache_read_tokens), 0)::bigint  AS cache_read_tokens,
+                COALESCE(SUM(r.cache_write_tokens), 0)::bigint AS cache_write_tokens,
+                COALESCE(SUM(r.output_tokens), 0)::bigint      AS output_tokens,
+                COALESCE(SUM(r.reasoning_tokens), 0)::bigint   AS reasoning_tokens,
+                COALESCE(SUM(r.total_tokens), 0)::bigint       AS total_tokens
+         FROM agent_runs r
+         JOIN projects p ON p.id = r.project_id
+         WHERE p.deleted_at IS NULL
+           AND r.deleted_at IS NULL
+         GROUP BY p.id, p.slug, r.runtime, r.model, r.agent_role
+         ORDER BY p.slug, r.runtime, r.model NULLS LAST, r.agent_role NULLS LAST",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(DashboardResponse {
+        overall: OverallProgress {
+            done: overall_done,
+            total: overall_total,
+            percentage: overall_hundredths as f64 / 100.0,
+            by_status,
+        },
+        top_projects: projects,
+        agent_usage: fold_agent_usage(&usage_rows),
+    })
+}
+
+pub const LISTABLE_FEATURE_STATUSES: [&str; 6] = [
+    "pending",
+    "spec_drafting",
+    "spec_ready",
+    "in_progress",
+    "blocked",
+    "done",
+];
+
+#[derive(Debug, FromRow)]
+struct FeatureByStatusDbRow {
+    slug: String,
+    name: String,
+    title: String,
+    status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FeatureByStatus {
+    #[serde(rename = "projectSlug")]
+    pub project_slug: String,
+    pub name: String,
+    pub title: String,
+    pub status: String,
+}
+
+impl From<FeatureByStatusDbRow> for FeatureByStatus {
+    fn from(r: FeatureByStatusDbRow) -> Self {
+        Self {
+            project_slug: r.slug,
+            name: r.name,
+            title: r.title,
+            status: r.status,
+        }
+    }
+}
+
+pub async fn read_features_by_status(
+    pool: &PgPool,
+    status: &str,
+) -> Result<Vec<FeatureByStatus>, ApiError> {
+    if !LISTABLE_FEATURE_STATUSES.contains(&status) {
+        return Err(ApiError::BadRequest);
+    }
+
+    let rows: Vec<FeatureByStatusDbRow> = sqlx::query_as(
+        "SELECT p.slug, f.name, f.title, f.status::text AS status
+         FROM features f
+         JOIN projects p ON p.id = f.project_id
+         WHERE p.deleted_at IS NULL
+           AND f.deleted_at IS NULL
+           AND f.status::text = $1
+         ORDER BY p.slug, f.feature_number, f.id",
+    )
+    .bind(status)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+pub async fn read_feature_log(
+    pool: &PgPool,
+    project_slug: &str,
+    feature_name: &str,
+) -> Result<FeatureLogResponse, ApiError> {
+    let project_row: Option<sqlx::types::Uuid> = sqlx::query_scalar(
+        "SELECT id
+         FROM projects
+         WHERE slug = $1 AND deleted_at IS NULL",
+    )
+    .bind(project_slug)
+    .fetch_optional(pool)
+    .await?;
+    let project_id = project_row.ok_or(ApiError::NotFound)?;
+
+    let feature_row: Option<FeatureHeaderDbRow> = sqlx::query_as(
+        "SELECT id, feature_number, name, title, status::text AS status, sdd, description, acceptance
+         FROM features
+         WHERE project_id = $1 AND name = $2 AND deleted_at IS NULL",
+    )
+    .bind(project_id)
+    .bind(feature_name)
+    .fetch_optional(pool)
+    .await?;
+    let feature_db = feature_row.ok_or(ApiError::NotFound)?;
+    let feature_id = feature_db.id;
+    let feature: FeatureHeader = feature_db.into();
+
+    let session_rows: Vec<ProcessLogSessionDbRow> = sqlx::query_as(
+        "SELECT id, local_id, agent, started_at, closed_at, paused_at,
+                plan, next_step, changes, verification, closure
+         FROM session_log
+         WHERE project_id = $1 AND feature_id = $2 AND deleted_at IS NULL
+         ORDER BY started_at ASC, id ASC",
+    )
+    .bind(project_id)
+    .bind(feature_id)
+    .fetch_all(pool)
+    .await?;
+
+    let session_ids: Vec<i64> = session_rows.iter().map(|r| r.id).collect();
+
+    let mut entries_by_session: HashMap<i64, Vec<ProcessLogEntry>> = HashMap::new();
+    if !session_ids.is_empty() {
+        let entry_rows: Vec<ProcessLogEntryDbRow> = sqlx::query_as(
+            "SELECT session_id, entry, created_at
+             FROM session_log_entries
+             WHERE session_id = ANY($1) AND deleted_at IS NULL
+             ORDER BY session_id ASC, created_at ASC, id ASC",
+        )
+        .bind(&session_ids)
+        .fetch_all(pool)
+        .await?;
+        for row in entry_rows {
+            entries_by_session
+                .entry(row.session_id)
+                .or_default()
+                .push(ProcessLogEntry {
+                    entry: row.entry,
+                    created_at: row.created_at.to_rfc3339(),
+                });
+        }
+    }
+
+    let sessions = session_rows
+        .into_iter()
+        .map(|db_row| {
+            let session_id = db_row.id;
+            let mut session: ProcessLogSession = db_row.into();
+            let entries = entries_by_session.remove(&session_id).unwrap_or_default();
+            session.entries = entries;
+            session
+        })
+        .collect();
+
+    Ok(FeatureLogResponse { feature, sessions })
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentUsageResponse {
+    pub runs: Vec<AgentRunNode>,
+    pub totals: AgentUsageTotals,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentRunNode {
+    #[serde(rename = "externalId")]
+    pub external_id: String,
+    #[serde(rename = "parentExternalId")]
+    pub parent_external_id: Option<String>,
+    pub runtime: String,
+    pub role: Option<String>,
+    pub label: Option<String>,
+    pub model: Option<String>,
+    #[serde(rename = "spawnDepth")]
+    pub spawn_depth: Option<i32>,
+    #[serde(rename = "startedAt")]
+    pub started_at: Option<String>,
+    #[serde(rename = "finishedAt")]
+    pub finished_at: Option<String>,
+    #[serde(rename = "durationSeconds")]
+    pub duration_seconds: Option<f64>,
+    pub tokens: AgentRunTokens,
+    pub children: Vec<AgentRunNode>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentRunTokens {
+    pub input: Option<i64>,
+    #[serde(rename = "cacheRead")]
+    pub cache_read: Option<i64>,
+    #[serde(rename = "cacheWrite")]
+    pub cache_write: Option<i64>,
+    pub output: Option<i64>,
+    pub reasoning: Option<i64>,
+    pub total: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentUsageTotals {
+    #[serde(rename = "effortSeconds")]
+    pub effort_seconds: f64,
+    #[serde(rename = "unionSeconds")]
+    pub union_seconds: f64,
+    pub tokens: TokenTotals,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct TokenTotals {
+    pub input: i64,
+    #[serde(rename = "cacheRead")]
+    pub cache_read: i64,
+    #[serde(rename = "cacheWrite")]
+    pub cache_write: i64,
+    pub output: i64,
+    pub reasoning: i64,
+    pub total: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct AgentRunDbRow {
+    runtime: String,
+    agent_role: Option<String>,
+    label: Option<String>,
+    external_id: String,
+    parent_external_id: Option<String>,
+    spawn_depth: Option<i32>,
+    model: Option<String>,
+    started_at: Option<DateTime<Utc>>,
+    finished_at: Option<DateTime<Utc>>,
+    duration_seconds: Option<f64>,
+    input_tokens: Option<i64>,
+    cache_read_tokens: Option<i64>,
+    cache_write_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    reasoning_tokens: Option<i64>,
+    total_tokens: Option<i64>,
+}
+
+impl AgentRunDbRow {
+    fn to_node(&self, children: Vec<AgentRunNode>) -> AgentRunNode {
+        AgentRunNode {
+            external_id: self.external_id.clone(),
+            parent_external_id: self.parent_external_id.clone(),
+            runtime: self.runtime.clone(),
+            role: self.agent_role.clone(),
+            label: self.label.clone(),
+            model: self.model.clone(),
+            spawn_depth: self.spawn_depth,
+            started_at: self.started_at.map(|t| t.to_rfc3339()),
+            finished_at: self.finished_at.map(|t| t.to_rfc3339()),
+            duration_seconds: self.duration_seconds,
+            tokens: AgentRunTokens {
+                input: self.input_tokens,
+                cache_read: self.cache_read_tokens,
+                cache_write: self.cache_write_tokens,
+                output: self.output_tokens,
+                reasoning: self.reasoning_tokens,
+                total: self.total_tokens,
+            },
+            children,
+        }
+    }
+}
+
+/// `rows` must already be in run order; every child list and the root list
+/// keep that order because positions in `rows` are only ever pushed ascending
+/// or sorted by position.
+fn build_run_tree(rows: &[AgentRunDbRow]) -> Vec<AgentRunNode> {
+    let index: HashMap<(&str, &str), usize> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| ((r.runtime.as_str(), r.external_id.as_str()), i))
+        .collect();
+
+    let parent_of: Vec<Option<usize>> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            r.parent_external_id
+                .as_deref()
+                .and_then(|p| index.get(&(r.runtime.as_str(), p)).copied())
+                .filter(|&p| p != i)
+        })
+        .collect();
+
+    let mut child_lists: Vec<Vec<usize>> = vec![Vec::new(); rows.len()];
+    for (i, parent) in parent_of.iter().enumerate() {
+        if let Some(p) = parent {
+            child_lists[*p].push(i);
+        }
+    }
+
+    // Edges actually taken by the walk; a cycle's closing edge is never taken.
+    let mut tree_children: Vec<Vec<usize>> = vec![Vec::new(); rows.len()];
+    let mut visited = vec![false; rows.len()];
+    let mut roots: Vec<usize> = Vec::new();
+
+    fn walk(
+        node: usize,
+        child_lists: &[Vec<usize>],
+        visited: &mut [bool],
+        tree_children: &mut [Vec<usize>],
+    ) {
+        visited[node] = true;
+        for &child in &child_lists[node] {
+            if !visited[child] {
+                tree_children[node].push(child);
+                walk(child, child_lists, visited, tree_children);
+            }
+        }
+    }
+
+    for (i, parent) in parent_of.iter().enumerate() {
+        if parent.is_none() {
+            roots.push(i);
+            walk(i, &child_lists, &mut visited, &mut tree_children);
+        }
+    }
+    for i in 0..rows.len() {
+        if !visited[i] {
+            roots.push(i);
+            walk(i, &child_lists, &mut visited, &mut tree_children);
+        }
+    }
+    roots.sort_unstable();
+
+    fn materialize(
+        node: usize,
+        rows: &[AgentRunDbRow],
+        tree_children: &[Vec<usize>],
+    ) -> AgentRunNode {
+        let children = tree_children[node]
+            .iter()
+            .map(|&c| materialize(c, rows, tree_children))
+            .collect();
+        rows[node].to_node(children)
+    }
+
+    roots
+        .into_iter()
+        .map(|r| materialize(r, rows, &tree_children))
+        .collect()
+}
+
+fn union_seconds(intervals: &mut [(DateTime<Utc>, DateTime<Utc>)]) -> f64 {
+    intervals.sort();
+    let mut total = TimeDelta::zero();
+    let mut current: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
+    for &(start, end) in intervals.iter() {
+        match current {
+            Some((s, e)) if start <= e => current = Some((s, e.max(end))),
+            Some((s, e)) => {
+                total += e - s;
+                current = Some((start, end));
+            }
+            None => current = Some((start, end)),
+        }
+    }
+    if let Some((s, e)) = current {
+        total += e - s;
+    }
+    total.num_microseconds().unwrap_or(i64::MAX) as f64 / 1_000_000.0
+}
+
+fn agent_usage_totals(rows: &[AgentRunDbRow]) -> AgentUsageTotals {
+    let mut intervals: Vec<(DateTime<Utc>, DateTime<Utc>)> = rows
+        .iter()
+        .filter_map(|r| match (r.started_at, r.finished_at) {
+            (Some(s), Some(f)) if f >= s => Some((s, f)),
+            _ => None,
+        })
+        .collect();
+    let sum = |f: fn(&AgentRunDbRow) -> Option<i64>| rows.iter().filter_map(f).sum::<i64>();
+    // `Iterator::sum` over no f64 yields `-0.0`, which would serialize as `-0.0`.
+    AgentUsageTotals {
+        effort_seconds: rows
+            .iter()
+            .filter_map(|r| r.duration_seconds)
+            .fold(0.0, |acc, d| acc + d),
+        union_seconds: union_seconds(&mut intervals),
+        tokens: TokenTotals {
+            input: sum(|r| r.input_tokens),
+            cache_read: sum(|r| r.cache_read_tokens),
+            cache_write: sum(|r| r.cache_write_tokens),
+            output: sum(|r| r.output_tokens),
+            reasoning: sum(|r| r.reasoning_tokens),
+            total: sum(|r| r.total_tokens),
+        },
+    }
+}
+
+pub async fn read_feature_agent_usage(
+    pool: &PgPool,
+    project_slug: &str,
+    feature_name: &str,
+) -> Result<AgentUsageResponse, ApiError> {
+    let project_row: Option<sqlx::types::Uuid> = sqlx::query_scalar(
+        "SELECT id
+         FROM projects
+         WHERE slug = $1 AND deleted_at IS NULL",
+    )
+    .bind(project_slug)
+    .fetch_optional(pool)
+    .await?;
+    let project_id = project_row.ok_or(ApiError::NotFound)?;
+
+    let feature_row: Option<i64> = sqlx::query_scalar(
+        "SELECT id
+         FROM features
+         WHERE project_id = $1 AND name = $2 AND deleted_at IS NULL",
+    )
+    .bind(project_id)
+    .bind(feature_name)
+    .fetch_optional(pool)
+    .await?;
+    let feature_id = feature_row.ok_or(ApiError::NotFound)?;
+
+    let rows: Vec<AgentRunDbRow> = sqlx::query_as(
+        "SELECT id, runtime, agent_role, label, external_id, parent_external_id, spawn_depth, model,
+                started_at, finished_at, duration_seconds,
+                input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+                total_tokens
+         FROM agent_runs
+         WHERE project_id = $1
+           AND feature_id = $2
+           AND deleted_at IS NULL
+         ORDER BY started_at ASC NULLS LAST, id ASC",
+    )
+    .bind(project_id)
+    .bind(feature_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(AgentUsageResponse {
+        runs: build_run_tree(&rows),
+        totals: agent_usage_totals(&rows),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{DateTime, TimeDelta, Utc};
+
+    use serde_json::json;
+
+    use super::{
+        build_run_tree, completion_hundredths, fold_agent_usage, union_seconds, AgentRunDbRow,
+        AgentRunNode, AgentUsageGroupDbRow,
+    };
+
+    #[test]
+    fn completion_hundredths_rounds_half_up() {
+        let cases = [
+            ((0, 0), 0),
+            ((0, 3), 0),
+            ((1, 32), 313),
+            ((3, 32), 938),
+            ((1, 16), 625),
+            ((1, 8), 1250),
+            ((1, 3), 3333),
+            ((2, 3), 6667),
+            ((2, 7), 2857),
+            ((5, 5), 10000),
+        ];
+        for ((done, total), expected) in cases {
+            assert_eq!(
+                completion_hundredths(done, total),
+                expected,
+                "completion_hundredths({done}, {total})"
+            );
+        }
+
+        assert_eq!(serde_json::to_string(&(3333_f64 / 100.0)).unwrap(), "33.33");
+        assert_eq!(
+            serde_json::to_string(&(10000_f64 / 100.0)).unwrap(),
+            "100.0"
+        );
+    }
+
+    fn at_ms(ms: i64) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+            + TimeDelta::milliseconds(ms)
+    }
+
+    #[test]
+    fn union_seconds_counts_overlaps_once() {
+        let s = |a: i64, b: i64| (at_ms(a * 1000), at_ms(b * 1000));
+        type Interval = (DateTime<Utc>, DateTime<Utc>);
+        let cases: Vec<(Vec<Interval>, f64)> = vec![
+            (vec![], 0.0),
+            (vec![s(0, 10), s(5, 15)], 15.0),
+            (vec![s(0, 10), s(20, 30)], 20.0),
+            (vec![s(0, 30), s(5, 10)], 30.0),
+            (vec![s(0, 10), s(10, 20)], 20.0),
+            (vec![s(20, 30), s(0, 10)], 20.0),
+            (vec![(at_ms(0), at_ms(500))], 0.5),
+        ];
+        for (mut intervals, expected) in cases {
+            let label = format!("{intervals:?}");
+            assert_eq!(union_seconds(&mut intervals), expected, "{label}");
+        }
+    }
+
+    fn row(runtime: &str, external_id: &str, parent: Option<&str>) -> AgentRunDbRow {
+        AgentRunDbRow {
+            runtime: runtime.to_string(),
+            agent_role: None,
+            label: None,
+            external_id: external_id.to_string(),
+            parent_external_id: parent.map(str::to_string),
+            spawn_depth: None,
+            model: None,
+            started_at: None,
+            finished_at: None,
+            duration_seconds: None,
+            input_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            total_tokens: None,
+        }
+    }
+
+    fn shape(nodes: &[AgentRunNode]) -> String {
+        nodes
+            .iter()
+            .map(|n| {
+                if n.children.is_empty() {
+                    n.external_id.clone()
+                } else {
+                    format!("{}[{}]", n.external_id, shape(&n.children))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    #[test]
+    fn build_run_tree_handles_orphans_and_cycles() {
+        // Run order is the slice order.
+        let rows = vec![
+            row("claude", "x", Some("y")),
+            row("claude", "root", None),
+            row("claude", "self", Some("self")),
+            row("claude", "mid", Some("root")),
+            row("claude", "orphan", Some("missing")),
+            row("codex", "codex-child", Some("root")),
+            row("claude", "leaf", Some("mid")),
+            row("claude", "y", Some("x")),
+            row("claude", "late", Some("root")),
+        ];
+        assert_eq!(
+            shape(&build_run_tree(&rows)),
+            "x[y],root[mid[leaf],late],self,orphan,codex-child"
+        );
+        assert!(build_run_tree(&[]).is_empty());
+    }
+
+    fn group(
+        slug: &str,
+        model: Option<&str>,
+        role: Option<&str>,
+        total: i64,
+    ) -> AgentUsageGroupDbRow {
+        AgentUsageGroupDbRow {
+            slug: slug.to_string(),
+            runtime: "claude".to_string(),
+            model: model.map(str::to_string),
+            agent_role: role.map(str::to_string),
+            runs: 1,
+            effort_seconds: 1.5,
+            input_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            output_tokens: 0,
+            reasoning_tokens: 0,
+            total_tokens: total,
+        }
+    }
+
+    #[test]
+    fn fold_agent_usage_groups_and_sorts() {
+        let zero = json!({
+            "runs": 0,
+            "effortSeconds": 0.0,
+            "tokens": {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0, "reasoning": 0, "total": 0}
+        });
+        let empty = serde_json::to_value(fold_agent_usage(&[])).unwrap();
+        assert_eq!(
+            empty,
+            json!({
+                "runs": 0,
+                "effortSeconds": 0.0,
+                "tokens": zero["tokens"],
+                "byRuntime": {"claude": zero, "codex": zero},
+                "byModel": [],
+                "byRole": [],
+                "topProjects": []
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&fold_agent_usage(&[]).totals.effort_seconds).unwrap(),
+            "0.0"
+        );
+
+        let rows = vec![
+            group("a", None, None, 50),
+            group("B", Some("m"), Some("r"), 50),
+            group("c", Some("Z"), Some("Q"), 50),
+        ];
+        let folded = fold_agent_usage(&rows);
+        let models: Vec<Option<&str>> =
+            folded.by_model.iter().map(|m| m.model.as_deref()).collect();
+        assert_eq!(models, vec![Some("Z"), Some("m"), None]);
+        let roles: Vec<Option<&str>> = folded.by_role.iter().map(|r| r.role.as_deref()).collect();
+        assert_eq!(roles, vec![Some("Q"), Some("r"), None]);
+        let slugs: Vec<&str> = folded
+            .top_projects
+            .iter()
+            .map(|p| p.slug.as_str())
+            .collect();
+        assert_eq!(slugs, vec!["B", "a", "c"]);
+        assert_eq!(folded.totals.runs, 3);
+        assert_eq!(folded.totals.tokens.total, 150);
+        assert_eq!(folded.by_runtime.claude.runs, 3);
+        assert_eq!(folded.by_runtime.codex.runs, 0);
+    }
 }

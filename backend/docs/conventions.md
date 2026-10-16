@@ -44,12 +44,14 @@ automatically by `rustfmt`, not hand-maintained).
   `<area>.rs` (e.g. `tests/harness.rs` tests `src/harness/`); unit tests for pure functions (e.g.
   JWT parsing helpers) live in a `#[cfg(test)] mod tests` block in the same file as the code they
   test, per Rust convention.
-- **Test framework:** Rust's built-in `#[tokio::test]` async test harness; `sqlx::test` for tests
-  that need a throwaway Postgres schema (it provisions and migrates a fresh test database per test
-  run).
-- **Fixture/isolation convention:** every test that touches Postgres uses `sqlx::test`, which points
-  at a dedicated test database (via `DATABASE_URL` resolved by `sqlx`'s test harness) and runs
-  `migrations/` against it — tests must never point at a real Supabase-hosted database, mirroring
+- **Test framework:** Rust's built-in `#[tokio::test]` async test harness; tests that need a
+  throwaway Postgres database start with `let db = TestDb::new().await; let pool = db.pool();`
+  (`tests/common/mod.rs`), which creates and migrates a uniquely named database and drops it when
+  `db` goes out of scope.
+- **Fixture/isolation convention:** every test that touches Postgres uses `TestDb`, which creates a
+  dedicated test database on the server named by `DATABASE_URL` and runs `migrations/` against it.
+  Do not use `#[sqlx::test]`: its database name depends only on the test path, so two concurrent
+  `cargo test` processes collide on it (feature 12) — tests must never point at a real Supabase-hosted database, mirroring
   the general harness convention of never touching real project data from a test.
 
 ## Error Handling

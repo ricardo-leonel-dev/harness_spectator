@@ -128,6 +128,7 @@ describe('LoginPageComponent', () => {
         provideRouter(
           [
             { path: 'login', component: LoginPageComponent },
+            { path: 'projects/:slug', component: LoginPageComponent },
             {
               path: '',
               canActivate: [authGuard],
@@ -578,6 +579,52 @@ describe('LoginPageComponent', () => {
         MODE_UNAVAILABLE_MESSAGE,
       );
       expect(factoryCalls).toBe(0);
+    });
+  });
+
+  describe('returnUrl after login (R45–R48)', () => {
+    async function submitAtReturnUrl(returnUrl: string | null): Promise<{
+      fixture: ReturnType<typeof TestBed.createComponent<LoginPageComponent>>;
+      router: Router;
+    }> {
+      const url =
+        returnUrl === null ? '/login' : `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+      await initAuth((req) => req.flush({ mode: 'local' }));
+      const router = TestBed.inject(Router);
+      await router.navigateByUrl(url);
+      const fixture = TestBed.createComponent(LoginPageComponent);
+      fixture.detectChanges();
+      fixture.componentInstance.form.setValue({ email: 'a@b.c', password: 'pw' });
+      const done = fixture.componentInstance.onSubmit();
+      const req = httpTesting.expectOne(LOGIN_URL);
+      req.flush({ accessToken: 'tok', expiresAt: nowSeconds() + 3600 });
+      await done;
+      return { fixture, router };
+    }
+
+    it('navigates to a safe returnUrl preserving its query string and fragment (R45)', async () => {
+      const { router } = await submitAtReturnUrl('/projects/demo?x=1#log');
+      expect(router.url).toBe('/projects/demo?x=1#log');
+    });
+
+    it('navigates to "/" when the returnUrl query param is missing (R46)', async () => {
+      const { router } = await submitAtReturnUrl(null);
+      expect(router.url).toBe('/');
+    });
+
+    it('falls back to "/" for an absolute external returnUrl (R47)', async () => {
+      const { router } = await submitAtReturnUrl('https://evil.example');
+      expect(router.url).toBe('/');
+    });
+
+    it('falls back to "/" for a protocol-relative returnUrl (R47)', async () => {
+      const { router } = await submitAtReturnUrl('//evil.example');
+      expect(router.url).toBe('/');
+    });
+
+    it('falls back to "/" when the returnUrl is /login itself (R48)', async () => {
+      const { router } = await submitAtReturnUrl('/login');
+      expect(router.url).toBe('/');
     });
   });
 });

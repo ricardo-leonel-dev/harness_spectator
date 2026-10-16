@@ -1,23 +1,27 @@
 import {
+  ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
   OnInit,
   ViewChild,
   computed,
   inject,
   signal,
-  ChangeDetectionStrategy,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
-import { ActivatedRoute, NavigationEnd, Router } from '@angular/router';
+import { DOCUMENT, NgClass } from '@angular/common';
+import { ActivatedRoute, NavigationEnd, Router, RouterLink } from '@angular/router';
 import {
   EMPTY,
+  Observable,
   catchError,
   distinctUntilChanged,
   filter,
   map,
   of,
+  shareReplay,
   startWith,
   switchMap,
 } from 'rxjs';
@@ -25,6 +29,7 @@ import { LucideAngularModule, LogOut } from 'lucide-angular';
 
 import { AuthService } from '../auth/auth.service';
 import {
+  AgentUsageResponse,
   HarnessApiService,
   HarnessStateResponse,
   ProjectSummary,
@@ -33,13 +38,19 @@ import { BlockedFeaturesCardComponent } from './blocked-features-card.component'
 import { FeatureRowVm, FeaturesTableComponent } from './features-table.component';
 import { OpenSessionCardComponent, OpenSessionVm } from './open-session-card.component';
 import { BlockedFeatureVm } from './blocked-features-card.component';
+import { AgentUsageState } from './agent-usage-section.component';
+import { ProcessLogCardComponent, ProcessLogState } from './process-log-card.component';
+import { ProgressOverviewComponent } from './progress-overview.component';
 import { ProjectSelectorComponent } from './project-selector.component';
-
-export const LAST_PROJECT_STORAGE_KEY = 'harness.lastProject';
 
 type StateResult =
   | { kind: 'ok'; slug: string; state: HarnessStateResponse }
   | { kind: 'error'; slug: string; error: HttpErrorResponse };
+
+interface LogTarget {
+  slug: string | null;
+  feature: string | null;
+}
 
 @Component({
   selector: 'app-dashboard-page',
@@ -48,6 +59,10 @@ type StateResult =
     OpenSessionCardComponent,
     BlockedFeaturesCardComponent,
     ProjectSelectorComponent,
+    ProcessLogCardComponent,
+    ProgressOverviewComponent,
+    RouterLink,
+    NgClass,
     LucideAngularModule,
   ],
   providers: [LucideAngularModule.pick({ LogOut }).providers ?? []],
@@ -56,7 +71,12 @@ type StateResult =
       <header
         class="sticky top-0 z-10 flex items-center gap-x-2.5 border-b border-line bg-panel px-4 py-2.75 sm:gap-x-3.5 sm:px-5"
       >
-        <div class="flex shrink-0 items-center gap-2.25" data-wordmark>
+        <a
+          routerLink="/"
+          aria-label="Overview"
+          class="flex shrink-0 items-center gap-2.25 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-signal hover:[&_span.text-bright]:text-bright"
+          data-wordmark
+        >
           <span class="relative inline-flex h-2.25 w-2.25" data-beacon="wordmark">
             <span
               class="absolute inset-0 animate-beacon rounded-full bg-signal motion-reduce:hidden motion-reduce:animate-none"
@@ -67,7 +87,7 @@ type StateResult =
           <span class="font-mono text-xs font-semibold uppercase tracking-[0.1em] text-bright">
             Harness
           </span>
-        </div>
+        </a>
         <span class="text-line-strong" aria-hidden="true">·</span>
         <app-project-selector
           class="flex min-w-0"
@@ -125,10 +145,14 @@ type StateResult =
         </div>
       </header>
 
-      <main class="grid flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-[1.7fr_1fr] lg:p-5" data-grid>
-        <section class="flex min-w-0 flex-col gap-2">
-          <h1 class="m-0 font-mono text-label font-semibold uppercase text-muted">Features</h1>
-          @if (notFound(); as missing) {
+      <main
+        class="grid flex-1 grid-cols-1 gap-4 p-4 lg:p-5"
+        [ngClass]="showsProject() ? 'lg:grid-cols-[1.7fr_1fr]' : null"
+        data-grid
+      >
+        @if (notFound(); as missing) {
+          <section class="flex min-w-0 flex-col gap-2">
+            <h1 class="m-0 font-mono text-label font-semibold uppercase text-muted">Features</h1>
             <div
               class="flex flex-wrap items-center gap-x-2 gap-y-2 rounded border border-status-blocked/35 bg-status-blocked/[0.12] px-2.5 py-2 text-xs text-err-text"
               role="alert"
@@ -150,52 +174,50 @@ type StateResult =
                 Choose another project
               </button>
             </div>
-          } @else if (loadError()) {
-            <div
-              class="flex items-center gap-2 rounded border border-status-blocked/35 bg-status-blocked/[0.12] px-2.5 py-2 text-xs text-err-text"
-              role="alert"
-            >
-              <span class="shrink-0 font-mono text-tag tracking-[0.08em] text-status-blocked">
-                [ERR]
-              </span>
-              <span class="min-w-0 break-words">{{ loadError() }}</span>
-            </div>
-          }
-          @if (loading()) {
-            <p
-              class="m-0 flex items-center gap-2 rounded-md border border-line bg-panel px-3.5 py-6 text-sm text-muted"
-              role="status"
-              data-state-loading
-            >
-              <span
-                class="inline-block h-3.5 w-3.5 animate-spin-fast rounded-full border-2 border-signal border-r-transparent motion-reduce:animate-none"
-                aria-hidden="true"
-              ></span>
-              @if (slug(); as current) {
-                Loading <span class="font-mono text-text">{{ current }}</span
+          </section>
+        } @else if (showsProject()) {
+          <section class="flex min-w-0 flex-col gap-2">
+            <h1 class="m-0 font-mono text-label font-semibold uppercase text-muted">Features</h1>
+            @if (loadError()) {
+              <div
+                class="flex items-center gap-2 rounded border border-status-blocked/35 bg-status-blocked/[0.12] px-2.5 py-2 text-xs text-err-text"
+                role="alert"
+              >
+                <span class="shrink-0 font-mono text-tag tracking-[0.08em] text-status-blocked">
+                  [ERR]
+                </span>
+                <span class="min-w-0 break-words">{{ loadError() }}</span>
+              </div>
+            }
+            @if (loading()) {
+              <p
+                class="m-0 flex items-center gap-2 rounded-md border border-line bg-panel px-3.5 py-6 text-sm text-muted"
+                role="status"
+                data-state-loading
+              >
+                <span
+                  class="inline-block h-3.5 w-3.5 animate-spin-fast rounded-full border-2 border-signal border-r-transparent motion-reduce:animate-none"
+                  aria-hidden="true"
+                ></span>
+                Loading <span class="font-mono text-text">{{ slug() }}</span
                 >…
-              } @else {
-                Loading projects…
-              }
-            </p>
-          } @else if (noProjects()) {
-            <p
-              class="m-0 rounded-md border border-line bg-panel px-3.5 py-6 text-center text-sm text-muted"
-              data-no-projects
-            >
-              No projects in the mirror yet — run
-              <span class="font-mono text-text">./init.sh</span> in a harness project to sync it.
-            </p>
-          } @else if (showsProject()) {
-            <app-features-table [features]="features() ?? []" />
-          }
-        </section>
+              </p>
+            } @else {
+              <app-features-table
+                [features]="features() ?? []"
+                [selected]="selectedFeature()"
+                (toggled)="onFeatureToggled($event)"
+              />
+            }
+          </section>
 
-        @if (showsProject()) {
           <aside class="flex min-w-0 flex-col gap-3.5">
             <app-open-session-card [session]="session()" />
             <app-blocked-features-card [features]="blocked()" />
+            <app-process-log-card [state]="processLog()" [usage]="agentUsage()" />
           </aside>
+        } @else if (slug() === null) {
+          <app-progress-overview class="min-w-0 lg:col-span-2" />
         }
       </main>
 
@@ -226,8 +248,10 @@ export class DashboardPageComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly document = inject(DOCUMENT);
 
   @ViewChild(ProjectSelectorComponent, { static: true }) selector!: ProjectSelectorComponent;
+  @ViewChild(ProcessLogCardComponent, { read: ElementRef }) card?: ElementRef<HTMLElement>;
 
   readonly projects = signal<ProjectSummary[] | null>(null);
   readonly projectsError = signal<string | null>(null);
@@ -239,15 +263,13 @@ export class DashboardPageComponent implements OnInit {
   readonly notFound = signal<string | null>(null);
   readonly loadError = signal<string | null>(null);
   readonly loggingOut = signal(false);
+  readonly selectedFeature = signal<string | null>(null);
+  readonly processLog = signal<ProcessLogState>({ kind: 'idle' });
+  readonly agentUsage = signal<AgentUsageState>({ kind: 'idle' });
 
   readonly activeAgents = computed(() => (this.session() ? 1 : 0));
-  readonly loading = computed(
-    () =>
-      this.stateLoading() ||
-      (this.slug() === null && this.projects() === null && this.projectsError() === null),
-  );
+  readonly loading = computed(() => this.stateLoading());
   readonly showsProject = computed(() => this.slug() !== null && this.notFound() === null);
-  readonly noProjects = computed(() => this.slug() === null && this.projects()?.length === 0);
 
   readonly userInitial = computed(() => {
     const session = this.auth.session();
@@ -262,12 +284,9 @@ export class DashboardPageComponent implements OnInit {
       .subscribe({
         next: (list) => {
           this.projects.set(list);
-          if (this.slug() === null) this.redirectToDefault(list);
         },
         error: (err: { message?: string }) => {
-          const msg = err?.message ?? 'Failed to load projects.';
-          this.projectsError.set(msg);
-          if (this.slug() === null) this.loadError.set(msg);
+          this.projectsError.set(err?.message ?? 'Failed to load projects.');
         },
       });
 
@@ -280,8 +299,6 @@ export class DashboardPageComponent implements OnInit {
         switchMap((slug) => {
           this.resetState(slug);
           if (slug === null) {
-            const list = this.projects();
-            if (list) this.redirectToDefault(list);
             return EMPTY;
           }
           return this.api.getProjectState(slug).pipe(
@@ -294,6 +311,65 @@ export class DashboardPageComponent implements OnInit {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((result) => this.applyState(result));
+
+    const target$: Observable<LogTarget> = this.router.events.pipe(
+      filter((e) => e instanceof NavigationEnd),
+      startWith(null),
+      map((): LogTarget => ({
+        slug: this.route.snapshot.firstChild?.paramMap.get('slug') ?? null,
+        feature: this.route.snapshot.firstChild?.queryParamMap.get('feature') || null,
+      })),
+      distinctUntilChanged((a, b) => a.slug === b.slug && a.feature === b.feature),
+      shareReplay({ bufferSize: 1, refCount: true }),
+    );
+
+    target$
+      .pipe(
+        switchMap(({ slug, feature }) => {
+          this.selectedFeature.set(slug ? feature : null);
+          if (!slug || !feature) return of<ProcessLogState>({ kind: 'idle' });
+          this.processLog.set({ kind: 'loading', name: feature });
+          return this.api.getFeatureLog(slug, feature).pipe(
+            map((log): ProcessLogState => ({ kind: 'ok', log })),
+            catchError((error: HttpErrorResponse) => of(toLogError(error, slug, feature))),
+          );
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((state) => this.processLog.set(state));
+
+    target$
+      .pipe(
+        switchMap(({ slug, feature }) => {
+          if (!slug || !feature) return of<AgentUsageState>({ kind: 'idle' });
+          this.agentUsage.set({ kind: 'loading' });
+          return this.api.getFeatureAgentUsage(slug, feature).pipe(
+            map((usage): AgentUsageState => ({
+              kind: 'ok',
+              usage: usage as AgentUsageResponse,
+            })),
+            catchError((error: HttpErrorResponse) =>
+              of<AgentUsageState>({
+                kind: 'error',
+                message: error.message || 'Failed to load agent usage.',
+              }),
+            ),
+          );
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((state) => this.agentUsage.set(state));
+  }
+
+  onFeatureToggled(name: string): void {
+    const slug = this.slug();
+    if (!slug) return;
+    const next = this.selectedFeature() === name ? null : name;
+    void this.router.navigate(['/projects', slug], {
+      queryParams: next ? { feature: next } : {},
+      replaceUrl: true,
+    });
+    if (!this.matches('(min-width: 1024px)', true)) this.scrollCardIntoView();
   }
 
   openProject(slug: string): void {
@@ -308,6 +384,18 @@ export class DashboardPageComponent implements OnInit {
     } finally {
       this.loggingOut.set(false);
     }
+  }
+
+  private matches(query: string, fallback: boolean): boolean {
+    return this.document.defaultView?.matchMedia(query).matches ?? fallback;
+  }
+
+  private scrollCardIntoView(): void {
+    const reduce = this.matches('(prefers-reduced-motion: reduce)', false);
+    this.card?.nativeElement.scrollIntoView({
+      behavior: reduce ? 'auto' : 'smooth',
+      block: 'start',
+    });
   }
 
   private resetState(slug: string | null): void {
@@ -326,7 +414,6 @@ export class DashboardPageComponent implements OnInit {
       this.features.set(result.state.features);
       this.session.set(result.state.openSession);
       this.blocked.set(result.state.blockedFeatures);
-      rememberProject(result.slug);
       return;
     }
     if (result.error.status === 404) {
@@ -336,27 +423,9 @@ export class DashboardPageComponent implements OnInit {
     this.loadError.set(result.error.message ?? 'Failed to load harness state.');
     this.features.set([]);
   }
-
-  private redirectToDefault(list: ProjectSummary[]): void {
-    if (list.length === 0) return;
-    const remembered = recallProject();
-    const target = list.some((p) => p.slug === remembered) ? remembered : list[0].slug;
-    void this.router.navigate(['/projects', target], { replaceUrl: true });
-  }
 }
 
-function rememberProject(slug: string): void {
-  try {
-    localStorage.setItem(LAST_PROJECT_STORAGE_KEY, slug);
-  } catch {
-    return;
-  }
-}
-
-function recallProject(): string | null {
-  try {
-    return localStorage.getItem(LAST_PROJECT_STORAGE_KEY);
-  } catch {
-    return null;
-  }
+function toLogError(error: HttpErrorResponse, slug: string, name: string): ProcessLogState {
+  if (error.status === 404) return { kind: 'not-found', name, slug };
+  return { kind: 'error', message: error.message || 'Failed to load the process log.' };
 }

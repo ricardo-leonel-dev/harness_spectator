@@ -16,3 +16,21 @@
     @apply m-0 h-full bg-ink p-0 font-sans text-text antialiased;
   }
 }
+
+@layer components {
+  body .ngx-charts-tooltip.type-tooltip {
+    @apply rounded border border-line-strong bg-panel-raised px-2.5 py-1.5 font-mono text-2xs text-text shadow-card;
+  }
+  body .ngx-charts-tooltip.type-tooltip .tooltip-caret.position-top {
+    @apply border-t-panel-raised;
+  }
+  body .ngx-charts-tooltip.type-tooltip .tooltip-caret.position-right {
+    @apply border-r-panel-raised;
+  }
+  body .ngx-charts-tooltip.type-tooltip .tooltip-caret.position-bottom {
+    @apply border-b-panel-raised;
+  }
+  body .ngx-charts-tooltip.type-tooltip .tooltip-caret.position-left {
+    @apply border-l-panel-raised;
+  }
+}

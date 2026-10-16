@@ -7,7 +7,10 @@ use tower_http::trace::TraceLayer;
 
 use crate::auth::router::{get_auth_mode, post_login};
 use crate::config::{AuthMode, Config};
-use crate::harness::router::{get_project_state, get_projects};
+use crate::harness::router::{
+    get_dashboard, get_feature_agent_usage, get_feature_log, get_features_by_status,
+    get_project_state, get_projects,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -34,7 +37,17 @@ pub fn build_app(pool: PgPool, config: Config) -> Router {
     let mut router = Router::new()
         .route("/api/auth/mode", get(get_auth_mode))
         .route("/api/harness/projects", get(get_projects))
-        .route("/api/harness/projects/{slug}/state", get(get_project_state));
+        .route("/api/harness/projects/{slug}/state", get(get_project_state))
+        .route(
+            "/api/harness/projects/{slug}/features/{name}/log",
+            get(get_feature_log),
+        )
+        .route(
+            "/api/harness/projects/{slug}/features/{name}/agent-usage",
+            get(get_feature_agent_usage),
+        )
+        .route("/api/harness/dashboard", get(get_dashboard))
+        .route("/api/harness/features", get(get_features_by_status));
     if config.auth.mode() == AuthMode::Local {
         router = router.route("/api/auth/login", post(post_login));
     }

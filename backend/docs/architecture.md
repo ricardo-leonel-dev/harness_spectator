@@ -87,7 +87,10 @@ migrated.
    - `src/bin/hash_password.rs` — the `hash-password` developer binary: reads one password line from
      stdin and prints its argon2id PHC hash for `LOCAL_AUTH_USERS`. Reads no environment.
    - `src/harness/` — the read-only Postgres reader (`sqlx` queries) and the
-     `/api/harness/projects` and `/api/harness/projects/{slug}/state` routes.
+     `/api/harness/projects`, `/api/harness/projects/{slug}/state`,
+     `/api/harness/projects/{slug}/features/{name}/log`,
+     `/api/harness/projects/{slug}/features/{name}/agent-usage`, `/api/harness/dashboard` and
+     `/api/harness/features` routes.
    - `src/config.rs` — the only place environment variables are read.
    Don't let implementers introduce additional top-level layers without updating this file first.
 2. **Dependencies.** Approved allowlist, not "anything goes":
@@ -135,14 +138,84 @@ frontend (separate project/process)
           [{slug, description, counts: {total, done, inProgress, blocked}}]
         - GET /api/harness/projects/{slug}/state: {project, features, openSession,
           blockedFeatures} for that slug; 404 + JSON error for an unknown/deleted slug
+        - GET /api/harness/projects/{slug}/features/{name}/log: {feature, sessions} for
+          that feature — the feature header plus every non-deleted session of that
+          feature with its non-deleted log entries; 404 + JSON error when the project
+          or feature is unknown or soft-deleted. Sessions are ordered by `started_at`
+          ascending (ties broken by `session_log.id`); each session's entries are
+          ordered by `created_at` ascending (ties broken by `session_log_entries.id`).
+          Identical `{ "error": "not found" }` envelope for unknown-project and
+          unknown-feature so the frontend does not have to distinguish the two.
+        - GET /api/harness/projects/{slug}/features/{name}/agent-usage (feature 9:
+          `feature_agent_usage_api`): {runs, totals} for that feature from `agent_runs`.
+          Same project/feature resolution and `{ "error": "not found" }` 404s as the log
+          route. `runs` is a nested tree of run nodes `{externalId, parentExternalId,
+          runtime, role (agent_role), label, model, spawnDepth, startedAt, finishedAt,
+          durationSeconds, tokens: {input, cacheRead, cacheWrite, output, reasoning, total},
+          children}`; every nullable key is always present (`null`). A run's parent is the
+          non-deleted run of the same feature with the same `runtime` and
+          `external_id = parent_external_id`; runs with no such parent (or a self-parent)
+          are top-level; a parent cycle is broken at its earliest run. Every array is in
+          run order (`started_at` ascending, nulls last, ties by `agent_runs.id`).
+          `spawnDepth` is the stored value, never recomputed from tree position. `totals`
+          is `{effortSeconds (sum of duration_seconds), unionSeconds (union of
+          [started_at, finished_at] intervals, overlaps counted once), tokens (per-category
+          sums of the stored columns, 0 when nothing is summable)}`. A feature with no runs
+          answers `200` with `runs: []` and zero totals.
+        - GET /api/harness/dashboard: aggregate progress across every project in the
+          mirror — `{overall, topProjects}`. `overall` carries `{done, total,
+          percentage, byStatus}` where `byStatus` is zero-filled across the six
+          countable `feature_status` values (`pending`, `specDrafting`, `specReady`,
+          `inProgress`, `blocked`, `done`); `superseded` features are excluded from
+          every count and percentage. `topProjects` is at most 10 entries, each
+          `{slug, done, total, percentage}`, sorted by `done` descending, then by
+          the returned `percentage` value descending, then by `slug` ascending
+          (byte-wise). Projects with no countable feature are omitted from
+          `topProjects`. Every `percentage` is a 2-decimal float
+          (half-up rounding, computed in integer hundredths); the response carries
+          the value at 2-decimal precision and the frontend formats it for display
+          with exactly 2 decimals (`toFixed(2)`). Every returned `slug` resolves on
+          `GET /api/harness/projects/{slug}/state` because both routes share the
+          `p.deleted_at IS NULL` filter, so the dashboard's chart entries are
+          directly navigable to project detail.
+          Feature 10 (`dashboard_agent_usage_stats`) adds a third key, `agentUsage`:
+          `{runs, effortSeconds, tokens, byRuntime, byModel, byRole, topProjects}`,
+          aggregated from `agent_runs`. Every aggregate is a usage bucket `{runs,
+          effortSeconds (sum of duration_seconds, 0.0 when none), tokens: {input,
+          cacheRead, cacheWrite, output, reasoning, total}}` (integer sums of the stored
+          columns, `0` when nothing is summable). A counted run is a non-deleted
+          `agent_runs` row of a non-deleted project, whatever its feature (none,
+          soft-deleted, superseded, any status). `byRuntime` is `{claude, codex}`,
+          zero-filled; `byModel` (`{model, ...bucket}`) and `byRole` (`{role, ...bucket}`,
+          `role` = `agent_role`) have one element per distinct value (`null` is its own
+          group), ordered by `tokens.total` descending then key ascending (byte-wise,
+          `null` last). `agentUsage.topProjects` (`{slug, ...bucket}`) is at most 10
+          projects with a counted run, ordered by `tokens.total` descending then `slug`
+          ascending (byte-wise); every slug resolves on `/state` like the progress
+          ranking. With no counted run, `agentUsage` is all zero buckets and empty arrays.
+        - GET /api/harness/features?status=<status> (feature 11: `features_by_status_api`):
+          every non-deleted feature of a non-deleted project whose `status` equals the query
+          value, as `[{projectSlug, name, title, status}]`, ordered by `projectSlug` ascending
+          then `feature_number` ascending. `status` takes the `feature_status` value as stored
+          (`pending`, `spec_drafting`, `spec_ready`, `in_progress`, `blocked`, `done` — the six
+          statuses the dashboard's `byStatus` counts); a missing, empty or other value
+          (including `superseded` and the camelCase `byStatus` keys) answers
+          `400 {"error":"bad request"}`. No match answers `200 []`. Every `projectSlug`/`name`
+          pair resolves on the per-feature log route.
   -> JSON response
 ```
+
+The `feature_process_log` response has no `notes` key and no `reviewStatus` /
+`reviewedBy` / `reviewedAt`: the toolkit's Postgres mirror does not currently
+carry `feature_notes` (per `db/migrations/0002_superseded.sql`) or review
+verdicts on `session_log`, so they cannot be served from here. When the mirror
+adds them, the route gains the keys additively rather than changing shape.
 
 ### Data source: the toolkit's Postgres mirror (feature 4: `multi_project_mirror_api`)
 
 The reader targets the shared Postgres mirror every harness project syncs into; its authoritative
 DDL is the toolkit's `db/schema.postgres.sql` plus `db/migrations/0001_sdd.sql`,
-`0002_superseded.sql` and `0003_paused_sessions.sql`. This backend never changes that schema. The
+`0002_superseded.sql`, `0003_paused_sessions.sql` and `0004_agent_runs.sql`. This backend never changes that schema. The
 project is chosen per request by slug (there is no configured `PROJECT_SLUG`). Reader rules:
 
 - `features.status` is the `feature_status` enum and is read as text (`status::text`); ids are
@@ -155,7 +228,19 @@ project is chosen per request by slug (there is no configured `PROJECT_SLUG`). R
 - Counts on `/api/harness/projects` are over non-deleted features (`total` includes every status).
 
 `migrations/0001_harness_schema.sql` is a test-only reproduction of the mirror tables and enum the
-reader uses, applied by `#[sqlx::test]`; it is never run against the mirror.
+reader uses, and `migrations/0002_agent_runs.sql` reproduces the toolkit's `0004_agent_runs.sql`
+verbatim (table, indexes, `active_agent_runs` view); both are applied by the tests' `TestDb` helper and never
+run against the mirror.
+
+The agent-usage route reads `agent_runs` directly over `DATABASE_URL`, like every other route, so
+serving data depends on the toolkit's `db/migrations/0004_agent_runs.sql` (the table) and
+`db/rpc/upsert_agent_run.sql` (the RPC `sync_postgres.sh` uses to fill it) being applied to the
+target mirror. Without the table the route answers `500 {"error":"internal error"}`; with the
+table but no RPC it answers `200` with no runs. The dashboard route reads `agent_runs` too (feature
+10, `agentUsage`), so on a mirror without the table the **whole** dashboard answers `500`, including
+its `overall` / `topProjects` progress blocks; with the table but no RPC `agentUsage` is the empty
+value. The other routes are unaffected. The read-only role behind `DATABASE_URL` needs `SELECT` on
+`agent_runs`.
 
 The target database is not necessarily any particular project's own mirror — it is configured via
 the `DATABASE_URL` env var, so the same backend can point at any sibling harness project's mirrored

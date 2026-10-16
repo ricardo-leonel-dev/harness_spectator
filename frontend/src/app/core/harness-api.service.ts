@@ -28,6 +28,40 @@ export interface HarnessStateResponse {
   blockedFeatures: Array<{ name: string; note: string }>;
 }
 
+export interface FeatureHeader {
+  featureNumber: number;
+  name: string;
+  title: string;
+  status: string;
+  sdd: boolean;
+  description: string | null;
+  acceptance: string[];
+}
+
+export interface ProcessLogEntry {
+  entry: string;
+  createdAt: string;
+}
+
+export interface ProcessLogSession {
+  localId: number;
+  agent: string;
+  startedAt: string;
+  closedAt: string | null;
+  pausedAt: string | null;
+  plan: string[] | null;
+  nextStep: string[] | null;
+  changes: string[] | null;
+  verification: string | null;
+  closure: string | null;
+  entries: ProcessLogEntry[];
+}
+
+export interface FeatureLogResponse {
+  feature: FeatureHeader;
+  sessions: ProcessLogSession[];
+}
+
 export interface AuthModeResponse {
   mode: 'supabase' | 'local';
 }
@@ -35,6 +69,64 @@ export interface AuthModeResponse {
 export interface LocalLoginResponse {
   accessToken: string;
   expiresAt: number;
+}
+
+export interface StatusCounts {
+  pending: number;
+  specDrafting: number;
+  specReady: number;
+  inProgress: number;
+  blocked: number;
+  done: number;
+}
+
+export interface DashboardResponse {
+  overall: { done: number; total: number; percentage: number; byStatus: StatusCounts };
+  topProjects: Array<{ slug: string; done: number; total: number; percentage: number }>;
+}
+
+export interface AgentRunTokens {
+  input: number | null;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+  output: number | null;
+  reasoning: number | null;
+  total: number | null;
+}
+
+export interface AgentRunNode {
+  externalId: string;
+  parentExternalId: string | null;
+  runtime: string;
+  role: string | null;
+  label: string | null;
+  model: string | null;
+  spawnDepth: number | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationSeconds: number | null;
+  tokens: AgentRunTokens;
+  children: AgentRunNode[];
+}
+
+export interface TokenTotals {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+  reasoning: number;
+  total: number;
+}
+
+export interface AgentUsageTotals {
+  effortSeconds: number;
+  unionSeconds: number;
+  tokens: TokenTotals;
+}
+
+export interface AgentUsageResponse {
+  runs: AgentRunNode[];
+  totals: AgentUsageTotals;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -48,6 +140,22 @@ export class HarnessApiService {
   getProjectState(slug: string): Observable<HarnessStateResponse> {
     return this.http.get<HarnessStateResponse>(
       `${environment.apiBaseUrl}/api/harness/projects/${encodeURIComponent(slug)}/state`,
+    );
+  }
+
+  getFeatureLog(slug: string, name: string): Observable<FeatureLogResponse> {
+    return this.http.get<FeatureLogResponse>(
+      `${environment.apiBaseUrl}/api/harness/projects/${encodeURIComponent(slug)}/features/${encodeURIComponent(name)}/log`,
+    );
+  }
+
+  getDashboard(): Observable<DashboardResponse> {
+    return this.http.get<DashboardResponse>(`${environment.apiBaseUrl}/api/harness/dashboard`);
+  }
+
+  getFeatureAgentUsage(slug: string, name: string): Observable<AgentUsageResponse> {
+    return this.http.get<AgentUsageResponse>(
+      `${environment.apiBaseUrl}/api/harness/projects/${encodeURIComponent(slug)}/features/${encodeURIComponent(name)}/agent-usage`,
     );
   }
 
