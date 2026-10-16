@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::Serialize;
@@ -362,6 +363,8 @@ pub struct DashboardResponse {
     pub overall: OverallProgress,
     #[serde(rename = "topProjects")]
     pub top_projects: Vec<ProjectProgress>,
+    #[serde(rename = "agentUsage")]
+    pub agent_usage: DashboardAgentUsage,
 }
 
 #[derive(Debug, Serialize)]
@@ -403,6 +406,164 @@ struct ProjectStatusCountsDbRow {
     in_progress: i64,
     blocked: i64,
     done: i64,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct UsageBucket {
+    pub runs: i64,
+    #[serde(rename = "effortSeconds")]
+    pub effort_seconds: f64,
+    pub tokens: TokenTotals,
+}
+
+impl UsageBucket {
+    fn add(&mut self, other: &UsageBucket) {
+        self.runs += other.runs;
+        self.effort_seconds += other.effort_seconds;
+        self.tokens.input += other.tokens.input;
+        self.tokens.cache_read += other.tokens.cache_read;
+        self.tokens.cache_write += other.tokens.cache_write;
+        self.tokens.output += other.tokens.output;
+        self.tokens.reasoning += other.tokens.reasoning;
+        self.tokens.total += other.tokens.total;
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct DashboardAgentUsage {
+    #[serde(flatten)]
+    pub totals: UsageBucket,
+    #[serde(rename = "byRuntime")]
+    pub by_runtime: RuntimeBreakdown,
+    #[serde(rename = "byModel")]
+    pub by_model: Vec<ModelUsage>,
+    #[serde(rename = "byRole")]
+    pub by_role: Vec<RoleUsage>,
+    #[serde(rename = "topProjects")]
+    pub top_projects: Vec<ProjectUsage>,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct RuntimeBreakdown {
+    pub claude: UsageBucket,
+    pub codex: UsageBucket,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelUsage {
+    pub model: Option<String>,
+    #[serde(flatten)]
+    pub usage: UsageBucket,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoleUsage {
+    pub role: Option<String>,
+    #[serde(flatten)]
+    pub usage: UsageBucket,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectUsage {
+    pub slug: String,
+    #[serde(flatten)]
+    pub usage: UsageBucket,
+}
+
+#[derive(Debug, FromRow)]
+struct AgentUsageGroupDbRow {
+    slug: String,
+    runtime: String,
+    model: Option<String>,
+    agent_role: Option<String>,
+    runs: i64,
+    effort_seconds: f64,
+    input_tokens: i64,
+    cache_read_tokens: i64,
+    cache_write_tokens: i64,
+    output_tokens: i64,
+    reasoning_tokens: i64,
+    total_tokens: i64,
+}
+
+/// Byte-wise ascending, `None` after every `Some`.
+fn cmp_nullable_key(a: &Option<String>, b: &Option<String>) -> Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) => a.as_str().cmp(b.as_str()),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+fn ranked_by_total<K>(
+    map: BTreeMap<K, UsageBucket>,
+    key_cmp: impl Fn(&K, &K) -> Ordering,
+) -> Vec<(K, UsageBucket)> {
+    let mut v: Vec<(K, UsageBucket)> = map.into_iter().collect();
+    v.sort_by(|(ka, a), (kb, b)| {
+        b.tokens
+            .total
+            .cmp(&a.tokens.total)
+            .then_with(|| key_cmp(ka, kb))
+    });
+    v
+}
+
+fn fold_agent_usage(rows: &[AgentUsageGroupDbRow]) -> DashboardAgentUsage {
+    let mut totals = UsageBucket::default();
+    let mut by_runtime = RuntimeBreakdown::default();
+    let mut by_model: BTreeMap<Option<String>, UsageBucket> = BTreeMap::new();
+    let mut by_role: BTreeMap<Option<String>, UsageBucket> = BTreeMap::new();
+    let mut by_slug: BTreeMap<String, UsageBucket> = BTreeMap::new();
+
+    for r in rows {
+        let bucket = UsageBucket {
+            runs: r.runs,
+            effort_seconds: r.effort_seconds,
+            tokens: TokenTotals {
+                input: r.input_tokens,
+                cache_read: r.cache_read_tokens,
+                cache_write: r.cache_write_tokens,
+                output: r.output_tokens,
+                reasoning: r.reasoning_tokens,
+                total: r.total_tokens,
+            },
+        };
+        totals.add(&bucket);
+        match r.runtime.as_str() {
+            "claude" => by_runtime.claude.add(&bucket),
+            "codex" => by_runtime.codex.add(&bucket),
+            _ => {}
+        }
+        by_model.entry(r.model.clone()).or_default().add(&bucket);
+        by_role
+            .entry(r.agent_role.clone())
+            .or_default()
+            .add(&bucket);
+        by_slug.entry(r.slug.clone()).or_default().add(&bucket);
+    }
+
+    let mut top_projects: Vec<ProjectUsage> =
+        ranked_by_total(by_slug, |a: &String, b: &String| a.as_str().cmp(b.as_str()))
+            .into_iter()
+            .map(|(slug, usage)| ProjectUsage { slug, usage })
+            .collect();
+    top_projects.truncate(TOP_PROJECTS_LIMIT);
+
+    DashboardAgentUsage {
+        totals,
+        by_runtime,
+        by_model: ranked_by_total(by_model, cmp_nullable_key)
+            .into_iter()
+            .map(|(model, usage)| ModelUsage { model, usage })
+            .collect(),
+        by_role: ranked_by_total(by_role, cmp_nullable_key)
+            .into_iter()
+            .map(|(role, usage)| RoleUsage { role, usage })
+            .collect(),
+        top_projects,
+    }
 }
 
 /// Percentage in hundredths, rounded half-up. `0` when `total == 0`.
@@ -475,6 +636,29 @@ pub async fn read_dashboard(pool: &PgPool) -> Result<DashboardResponse, ApiError
     });
     projects.truncate(TOP_PROJECTS_LIMIT);
 
+    let usage_rows: Vec<AgentUsageGroupDbRow> = sqlx::query_as(
+        "SELECT p.slug,
+                r.runtime,
+                r.model,
+                r.agent_role,
+                COUNT(*)                                       AS runs,
+                COALESCE(SUM(r.duration_seconds), 0)::float8   AS effort_seconds,
+                COALESCE(SUM(r.input_tokens), 0)::bigint       AS input_tokens,
+                COALESCE(SUM(r.cache_read_tokens), 0)::bigint  AS cache_read_tokens,
+                COALESCE(SUM(r.cache_write_tokens), 0)::bigint AS cache_write_tokens,
+                COALESCE(SUM(r.output_tokens), 0)::bigint      AS output_tokens,
+                COALESCE(SUM(r.reasoning_tokens), 0)::bigint   AS reasoning_tokens,
+                COALESCE(SUM(r.total_tokens), 0)::bigint       AS total_tokens
+         FROM agent_runs r
+         JOIN projects p ON p.id = r.project_id
+         WHERE p.deleted_at IS NULL
+           AND r.deleted_at IS NULL
+         GROUP BY p.id, p.slug, r.runtime, r.model, r.agent_role
+         ORDER BY p.slug, r.runtime, r.model NULLS LAST, r.agent_role NULLS LAST",
+    )
+    .fetch_all(pool)
+    .await?;
+
     Ok(DashboardResponse {
         overall: OverallProgress {
             done: overall_done,
@@ -483,6 +667,7 @@ pub async fn read_dashboard(pool: &PgPool) -> Result<DashboardResponse, ApiError
             by_status,
         },
         top_projects: projects,
+        agent_usage: fold_agent_usage(&usage_rows),
     })
 }
 
@@ -850,8 +1035,11 @@ pub async fn read_feature_agent_usage(
 mod tests {
     use chrono::{DateTime, TimeDelta, Utc};
 
+    use serde_json::json;
+
     use super::{
-        build_run_tree, completion_hundredths, union_seconds, AgentRunDbRow, AgentRunNode,
+        build_run_tree, completion_hundredths, fold_agent_usage, union_seconds, AgentRunDbRow,
+        AgentRunNode, AgentUsageGroupDbRow,
     };
 
     #[test]
@@ -963,5 +1151,75 @@ mod tests {
             "x[y],root[mid[leaf],late],self,orphan,codex-child"
         );
         assert!(build_run_tree(&[]).is_empty());
+    }
+
+    fn group(
+        slug: &str,
+        model: Option<&str>,
+        role: Option<&str>,
+        total: i64,
+    ) -> AgentUsageGroupDbRow {
+        AgentUsageGroupDbRow {
+            slug: slug.to_string(),
+            runtime: "claude".to_string(),
+            model: model.map(str::to_string),
+            agent_role: role.map(str::to_string),
+            runs: 1,
+            effort_seconds: 1.5,
+            input_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            output_tokens: 0,
+            reasoning_tokens: 0,
+            total_tokens: total,
+        }
+    }
+
+    #[test]
+    fn fold_agent_usage_groups_and_sorts() {
+        let zero = json!({
+            "runs": 0,
+            "effortSeconds": 0.0,
+            "tokens": {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0, "reasoning": 0, "total": 0}
+        });
+        let empty = serde_json::to_value(fold_agent_usage(&[])).unwrap();
+        assert_eq!(
+            empty,
+            json!({
+                "runs": 0,
+                "effortSeconds": 0.0,
+                "tokens": zero["tokens"],
+                "byRuntime": {"claude": zero, "codex": zero},
+                "byModel": [],
+                "byRole": [],
+                "topProjects": []
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&fold_agent_usage(&[]).totals.effort_seconds).unwrap(),
+            "0.0"
+        );
+
+        let rows = vec![
+            group("a", None, None, 50),
+            group("B", Some("m"), Some("r"), 50),
+            group("c", Some("Z"), Some("Q"), 50),
+        ];
+        let folded = fold_agent_usage(&rows);
+        let models: Vec<Option<&str>> =
+            folded.by_model.iter().map(|m| m.model.as_deref()).collect();
+        assert_eq!(models, vec![Some("Z"), Some("m"), None]);
+        let roles: Vec<Option<&str>> = folded.by_role.iter().map(|r| r.role.as_deref()).collect();
+        assert_eq!(roles, vec![Some("Q"), Some("r"), None]);
+        let slugs: Vec<&str> = folded
+            .top_projects
+            .iter()
+            .map(|p| p.slug.as_str())
+            .collect();
+        assert_eq!(slugs, vec!["B", "a", "c"]);
+        assert_eq!(folded.totals.runs, 3);
+        assert_eq!(folded.totals.tokens.total, 150);
+        assert_eq!(folded.by_runtime.claude.runs, 3);
+        assert_eq!(folded.by_runtime.codex.runs, 0);
     }
 }

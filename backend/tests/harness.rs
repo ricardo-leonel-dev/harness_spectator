@@ -785,6 +785,7 @@ async fn reader_performs_only_select_queries(pool: PgPool) -> sqlx::Result<()> {
         .await
         .expect("read_dashboard should succeed on a read-only connection");
     assert_eq!(dashboard.overall.total, 1);
+    assert_eq!(dashboard.agent_usage.totals.runs, 1);
 
     let usage = read_feature_agent_usage(&read_only_pool, "test-project", "blocked_feat")
         .await
@@ -1441,6 +1442,24 @@ async fn feature_log_does_not_cross_projects(pool: PgPool) {
     assert_eq!(other_status, StatusCode::OK);
 }
 
+/// The R18 value: what `agentUsage` must be when no counted run exists.
+fn empty_agent_usage() -> Value {
+    let zero = json!({
+        "runs": 0,
+        "effortSeconds": 0.0,
+        "tokens": {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0, "reasoning": 0, "total": 0}
+    });
+    json!({
+        "runs": 0,
+        "effortSeconds": 0.0,
+        "tokens": {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0, "reasoning": 0, "total": 0},
+        "byRuntime": {"claude": zero, "codex": zero},
+        "byModel": [],
+        "byRole": [],
+        "topProjects": []
+    })
+}
+
 #[sqlx::test]
 async fn dashboard_with_empty_mirror_returns_zeroes(pool: PgPool) {
     let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
@@ -1448,6 +1467,7 @@ async fn dashboard_with_empty_mirror_returns_zeroes(pool: PgPool) {
     assert_eq!(
         body,
         json!({
+            "agentUsage": empty_agent_usage(),
             "overall": {
                 "done": 0,
                 "total": 0,
@@ -1494,6 +1514,7 @@ async fn dashboard_aggregates_counts_across_projects(pool: PgPool) {
     assert_eq!(
         body,
         json!({
+            "agentUsage": empty_agent_usage(),
             "overall": {
                 "done": 3,
                 "total": 10,
@@ -1723,6 +1744,348 @@ async fn dashboard_limits_top_projects_to_ten(pool: PgPool) {
     assert_eq!(
         body["overall"]["total"].as_i64().unwrap(),
         total_per_project
+    );
+}
+
+fn usage_bucket(runs: i64, effort: f64, tokens: [i64; 6]) -> Value {
+    json!({
+        "runs": runs,
+        "effortSeconds": effort,
+        "tokens": {
+            "input": tokens[0],
+            "cacheRead": tokens[1],
+            "cacheWrite": tokens[2],
+            "output": tokens[3],
+            "reasoning": tokens[4],
+            "total": tokens[5]
+        }
+    })
+}
+
+fn with_key(key: &str, value: Value, bucket: Value) -> Value {
+    let mut obj = bucket.as_object().unwrap().clone();
+    obj.insert(key.to_string(), value);
+    Value::Object(obj)
+}
+
+#[sqlx::test]
+async fn dashboard_agent_usage_aggregates_runs_across_projects(pool: PgPool) {
+    let alpha = seed_project(&pool, "alpha", None, false).await;
+    let beta = seed_project(&pool, "beta", None, false).await;
+    let gamma = seed_project(&pool, "gamma", None, false).await;
+    let gone = seed_project(&pool, "gone", None, true).await;
+
+    let a1 = seed_feature(&pool, alpha, 1, "a1", "done", false, false).await;
+    let a2 = seed_feature(&pool, alpha, 2, "a2", "superseded", false, false).await;
+    let b1 = seed_feature(&pool, beta, 1, "b1", "done", false, true).await;
+    seed_feature(&pool, gamma, 1, "g1", "pending", false, false).await;
+
+    let opus = Some("claude-opus-5-5");
+    let gpt = Some("gpt-5-codex");
+    seed_agent_run(
+        &pool,
+        alpha,
+        AgentRunSeed {
+            agent_role: Some("leader"),
+            model: opus,
+            duration_seconds: Some(100.0),
+            tokens: [Some(10), Some(1000), Some(200), Some(50), None, Some(1260)],
+            ..run_seed(1, Some(a1), "r1")
+        },
+    )
+    .await;
+    seed_agent_run(
+        &pool,
+        alpha,
+        AgentRunSeed {
+            agent_role: Some("implementer"),
+            model: opus,
+            duration_seconds: Some(30.5),
+            tokens: [Some(5), Some(500), Some(100), Some(20), None, Some(625)],
+            ..run_seed(2, None, "r2")
+        },
+    )
+    .await;
+    seed_agent_run(
+        &pool,
+        alpha,
+        AgentRunSeed {
+            runtime: "codex",
+            agent_role: Some("implementer"),
+            model: gpt,
+            duration_seconds: Some(12.25),
+            tokens: [Some(100), Some(0), Some(0), Some(40), Some(8), Some(140)],
+            ..run_seed(3, Some(a2), "r3")
+        },
+    )
+    .await;
+    seed_agent_run(
+        &pool,
+        alpha,
+        AgentRunSeed {
+            agent_role: Some("reviewer"),
+            model: Some("claude-sonnet-5"),
+            duration_seconds: Some(1000.0),
+            tokens: [Some(1), Some(1), Some(1), Some(1), Some(1), Some(99999)],
+            deleted: true,
+            ..run_seed(4, Some(a1), "r4")
+        },
+    )
+    .await;
+    seed_agent_run(
+        &pool,
+        beta,
+        AgentRunSeed {
+            tokens: [Some(1), Some(0), Some(0), Some(1), None, Some(2)],
+            ..run_seed(5, Some(b1), "r5")
+        },
+    )
+    .await;
+    seed_agent_run(
+        &pool,
+        beta,
+        AgentRunSeed {
+            runtime: "codex",
+            agent_role: Some("reviewer"),
+            model: gpt,
+            duration_seconds: Some(2.0),
+            tokens: [Some(300), Some(0), Some(0), Some(60), Some(12), Some(360)],
+            ..run_seed(6, None, "r6")
+        },
+    )
+    .await;
+    seed_agent_run(
+        &pool,
+        gone,
+        AgentRunSeed {
+            agent_role: Some("leader"),
+            model: opus,
+            duration_seconds: Some(50.0),
+            tokens: [Some(1), Some(1), Some(1), Some(1), Some(1), Some(5000)],
+            ..run_seed(7, None, "r7")
+        },
+    )
+    .await;
+
+    let (status, body) = get(pool.clone(), DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let mut agent_usage = usage_bucket(5, 144.75, [416, 1500, 300, 171, 20, 2387]);
+    let extra = json!({
+        "byRuntime": {
+            "claude": usage_bucket(3, 130.5, [16, 1500, 300, 71, 0, 1887]),
+            "codex": usage_bucket(2, 14.25, [400, 0, 0, 100, 20, 500])
+        },
+        "byModel": [
+            with_key("model", json!("claude-opus-5-5"), usage_bucket(2, 130.5, [15, 1500, 300, 70, 0, 1885])),
+            with_key("model", json!("gpt-5-codex"), usage_bucket(2, 14.25, [400, 0, 0, 100, 20, 500])),
+            with_key("model", Value::Null, usage_bucket(1, 0.0, [1, 0, 0, 1, 0, 2]))
+        ],
+        "byRole": [
+            with_key("role", json!("leader"), usage_bucket(1, 100.0, [10, 1000, 200, 50, 0, 1260])),
+            with_key("role", json!("implementer"), usage_bucket(2, 42.75, [105, 500, 100, 60, 8, 765])),
+            with_key("role", json!("reviewer"), usage_bucket(1, 2.0, [300, 0, 0, 60, 12, 360])),
+            with_key("role", Value::Null, usage_bucket(1, 0.0, [1, 0, 0, 1, 0, 2]))
+        ],
+        "topProjects": [
+            with_key("slug", json!("alpha"), usage_bucket(3, 142.75, [115, 1500, 300, 110, 8, 2025])),
+            with_key("slug", json!("beta"), usage_bucket(2, 2.0, [301, 0, 0, 61, 12, 362]))
+        ]
+    });
+    agent_usage
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+
+    assert_eq!(
+        body,
+        json!({
+            "overall": {
+                "done": 1,
+                "total": 2,
+                "percentage": 50.0,
+                "byStatus": {
+                    "pending": 1,
+                    "specDrafting": 0,
+                    "specReady": 0,
+                    "inProgress": 0,
+                    "blocked": 0,
+                    "done": 1
+                }
+            },
+            "topProjects": [
+                { "slug": "alpha", "done": 1, "total": 1, "percentage": 100.0 },
+                { "slug": "gamma", "done": 0, "total": 1, "percentage": 0.0 }
+            ],
+            "agentUsage": agent_usage
+        })
+    );
+
+    for entry in body["agentUsage"]["topProjects"].as_array().unwrap() {
+        let slug = entry["slug"].as_str().unwrap();
+        let (state_status, _) = get(pool.clone(), &state_path(slug), Some(valid_token())).await;
+        assert_eq!(
+            state_status,
+            StatusCode::OK,
+            "state for {slug} must resolve"
+        );
+    }
+}
+
+#[sqlx::test]
+async fn dashboard_agent_usage_orders_breakdowns_and_ranking(pool: PgPool) {
+    let p_a = seed_project(&pool, "p-a", None, false).await;
+    let p_b = seed_project(&pool, "p-b", None, false).await;
+    let p_c = seed_project(&pool, "p-c", None, false).await;
+    let p_d = seed_project(&pool, "p-d", None, false).await;
+
+    type OrderRun<'a> = (Uuid, i64, Option<&'a str>, Option<&'a str>, Option<i64>);
+    let runs: [OrderRun; 5] = [
+        (p_a, 1, Some("m-b"), Some("implementer"), Some(100)),
+        (p_b, 2, Some("m-a"), Some("explorer"), Some(100)),
+        (p_c, 3, Some("m-z"), Some("reviewer"), Some(300)),
+        (p_d, 4, Some("m-c"), Some("leader"), None),
+        (p_d, 5, None, None, None),
+    ];
+    for (project, local_id, model, role, total) in runs {
+        let external_id = format!("run-{local_id}");
+        seed_agent_run(
+            &pool,
+            project,
+            AgentRunSeed {
+                model,
+                agent_role: role,
+                tokens: [None, None, None, None, None, total],
+                ..run_seed(local_id, None, &external_id)
+            },
+        )
+        .await;
+    }
+
+    let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    let usage = &body["agentUsage"];
+
+    let pick = |arr: &Value, key: &str| -> Vec<Value> {
+        arr.as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e[key].clone())
+            .collect()
+    };
+    assert_eq!(
+        pick(&usage["topProjects"], "slug"),
+        vec![json!("p-c"), json!("p-a"), json!("p-b"), json!("p-d")]
+    );
+    assert_eq!(
+        pick(&usage["byModel"], "model"),
+        vec![
+            json!("m-z"),
+            json!("m-a"),
+            json!("m-b"),
+            json!("m-c"),
+            Value::Null
+        ]
+    );
+    assert_eq!(
+        pick(&usage["byRole"], "role"),
+        vec![
+            json!("reviewer"),
+            json!("explorer"),
+            json!("implementer"),
+            json!("leader"),
+            Value::Null
+        ]
+    );
+    assert_eq!(usage["topProjects"][3]["slug"], json!("p-d"));
+    assert_eq!(usage["topProjects"][3]["tokens"]["total"], json!(0));
+    assert_eq!(usage["topProjects"][3]["runs"], json!(2));
+}
+
+#[sqlx::test]
+async fn dashboard_agent_usage_limits_top_projects_to_ten(pool: PgPool) {
+    for n in 1..=12_i64 {
+        let slug = format!("u{n:02}");
+        let project = seed_project(&pool, &slug, None, false).await;
+        seed_agent_run(
+            &pool,
+            project,
+            AgentRunSeed {
+                tokens: [None, None, None, None, None, Some((13 - n) * 10)],
+                ..run_seed(n, None, "run")
+            },
+        )
+        .await;
+    }
+
+    let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    let usage = &body["agentUsage"];
+    let slugs: Vec<&str> = usage["topProjects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["slug"].as_str().unwrap())
+        .collect();
+    let expected: Vec<String> = (1..=10).map(|n| format!("u{n:02}")).collect();
+    assert_eq!(
+        slugs,
+        expected.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+    assert_eq!(usage["runs"], json!(12));
+    assert_eq!(usage["tokens"]["total"], json!(780));
+}
+
+#[sqlx::test]
+async fn dashboard_agent_usage_is_empty_when_only_deleted_runs_exist(pool: PgPool) {
+    let live = seed_project(&pool, "live", None, false).await;
+    let gone = seed_project(&pool, "gone", None, true).await;
+    seed_feature(&pool, live, 1, "l1", "done", false, false).await;
+    seed_agent_run(
+        &pool,
+        live,
+        AgentRunSeed {
+            duration_seconds: Some(5.0),
+            tokens: [Some(1), Some(1), Some(1), Some(1), Some(1), Some(5)],
+            deleted: true,
+            ..run_seed(1, None, "deleted-run")
+        },
+    )
+    .await;
+    seed_agent_run(
+        &pool,
+        gone,
+        AgentRunSeed {
+            duration_seconds: Some(7.0),
+            tokens: [Some(1), Some(1), Some(1), Some(1), Some(1), Some(7)],
+            ..run_seed(1, None, "orphaned-run")
+        },
+    )
+    .await;
+
+    let (status, body) = get(pool, DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({
+            "overall": {
+                "done": 1,
+                "total": 1,
+                "percentage": 100.0,
+                "byStatus": {
+                    "pending": 0,
+                    "specDrafting": 0,
+                    "specReady": 0,
+                    "inProgress": 0,
+                    "blocked": 0,
+                    "done": 1
+                }
+            },
+            "topProjects": [
+                { "slug": "live", "done": 1, "total": 1, "percentage": 100.0 }
+            ],
+            "agentUsage": empty_agent_usage()
+        })
     );
 }
 
