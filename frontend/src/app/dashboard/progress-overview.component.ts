@@ -21,6 +21,7 @@ import {
 
 import { DashboardResponse, HarnessApiService, StatusCounts } from '../core/harness-api.service';
 import { CHART_COLORS, formatPercent } from './progress-format';
+import { DashboardAgentUsageComponent } from './dashboard-agent-usage.component';
 
 type OverviewState =
   | { kind: 'loading' }
@@ -65,7 +66,7 @@ const BAR_SCHEME = {
 
 @Component({
   selector: 'app-progress-overview',
-  imports: [GaugeModule, PieChartModule, BarChartModule, RouterLink],
+  imports: [GaugeModule, PieChartModule, BarChartModule, RouterLink, DashboardAgentUsageComponent],
   template: `
     <div class="flex min-w-0 flex-col gap-4" data-overview>
       <header class="flex flex-col gap-1">
@@ -287,6 +288,8 @@ const BAR_SCHEME = {
                   }
                 </section>
               }
+
+              <app-dashboard-agent-usage [usage]="current.data.agentUsage ?? null" />
             }
           }
         }
