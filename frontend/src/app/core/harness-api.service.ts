@@ -83,6 +83,20 @@ export interface StatusCounts {
 export interface DashboardResponse {
   overall: { done: number; total: number; percentage: number; byStatus: StatusCounts };
   topProjects: Array<{ slug: string; done: number; total: number; percentage: number }>;
+  agentUsage?: DashboardAgentUsage;
+}
+
+export interface UsageBucket {
+  runs: number;
+  effortSeconds: number;
+  tokens: TokenTotals;
+}
+
+export interface DashboardAgentUsage extends UsageBucket {
+  byRuntime: { claude: UsageBucket; codex: UsageBucket };
+  byModel: Array<UsageBucket & { model: string | null }>;
+  byRole: Array<UsageBucket & { role: string | null }>;
+  topProjects: Array<UsageBucket & { slug: string }>;
 }
 
 export interface AgentRunTokens {

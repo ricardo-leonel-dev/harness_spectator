@@ -1,4 +1,4 @@
-import { CHART_COLORS, formatPercent } from './progress-format';
+import { CHART_COLORS, USAGE_CHART_COLORS, formatPercent } from './progress-format';
 
 describe('formatPercent', () => {
   it('returns exactly two decimals for a whole number', () => {
@@ -41,6 +41,31 @@ describe('CHART_COLORS', () => {
       expect(computed).toBe(`rgb(${r}, ${g}, ${b})`);
     } finally {
       probe.remove();
+    }
+  });
+});
+
+describe('USAGE_CHART_COLORS', () => {
+  it('pins ranking to the signal token and model to the dim token', () => {
+    expect(USAGE_CHART_COLORS.ranking).toBe('#e8a33d');
+    expect(USAGE_CHART_COLORS.model).toBe('#8b95a5');
+  });
+
+  it('matches the Tailwind signal and dim tokens at runtime', () => {
+    for (const [token, expected] of [
+      ['bg-signal', USAGE_CHART_COLORS.ranking],
+      ['bg-dim', USAGE_CHART_COLORS.model],
+    ] as const) {
+      const probe = document.createElement('div');
+      probe.className = token;
+      document.body.appendChild(probe);
+      try {
+        const computed = getComputedStyle(probe).backgroundColor;
+        const [r, g, b] = (expected.match(/[0-9a-f]{2}/g) ?? []).map((h) => parseInt(h, 16));
+        expect(computed).toBe(`rgb(${r}, ${g}, ${b})`);
+      } finally {
+        probe.remove();
+      }
     }
   });
 });

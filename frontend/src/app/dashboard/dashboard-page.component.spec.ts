@@ -1412,6 +1412,257 @@ describe('DashboardPageComponent', () => {
         remove();
       }
     }));
+    it('renders a populated agent usage block at 360px with no horizontal scroll', fakeAsync(() => {
+      const longSlug = 'a-rather-long-harness-project-slug-for-the-360-test';
+      const harness = boot('/');
+      httpTesting
+        .expectOne(PROJECTS_URL)
+        .flush([
+          ...PROJECTS,
+          { ...PROJECTS[1], slug: longSlug, description: 'A long description '.repeat(10) },
+        ]);
+      httpTesting.expectOne(DASHBOARD_URL).flush(
+        dashboardResponse({
+          topProjects: [
+            { slug: longSlug, done: 4, total: 12, percentage: 33.33 },
+            { slug: 'demo-project', done: 7, total: 8, percentage: 87.5 },
+            { slug: 'other-project', done: 1, total: 4, percentage: 25 },
+            { slug: 'spectator_backend', done: 7, total: 8, percentage: 87.5 },
+            { slug: 'rushr-web', done: 4, total: 9, percentage: 44.44 },
+            { slug: 'alpha', done: 1, total: 2, percentage: 50 },
+            { slug: 'bravo', done: 2, total: 7, percentage: 28.57 },
+            { slug: 'charlie', done: 3, total: 10, percentage: 30 },
+            { slug: 'delta', done: 0, total: 5, percentage: 0 },
+            { slug: 'echo', done: 5, total: 11, percentage: 45.45 },
+          ],
+          agentUsage: {
+            runs: 1834,
+            effortSeconds: 1123440.5,
+            tokens: {
+              input: 1200000,
+              cacheRead: 44100000,
+              cacheWrite: 2100000,
+              output: 790000,
+              reasoning: 12000,
+              total: 48213904,
+            },
+            byRuntime: {
+              claude: {
+                runs: 1200,
+                effortSeconds: 900000,
+                tokens: {
+                  input: 1000000,
+                  cacheRead: 35000000,
+                  cacheWrite: 1500000,
+                  output: 700000,
+                  reasoning: 11000,
+                  total: 39500000,
+                },
+              },
+              codex: {
+                runs: 634,
+                effortSeconds: 223440.5,
+                tokens: {
+                  input: 200000,
+                  cacheRead: 9100000,
+                  cacheWrite: 600000,
+                  output: 90000,
+                  reasoning: 1000,
+                  total: 8713904,
+                },
+              },
+            },
+            byModel: [
+              {
+                model: 'a-rather-long-claude-model-identifier-for-the-360-test',
+                runs: 1000,
+                effortSeconds: 800000,
+                tokens: {
+                  input: 800000,
+                  cacheRead: 28000000,
+                  cacheWrite: 1000000,
+                  output: 600000,
+                  reasoning: 8000,
+                  total: 30400000,
+                },
+              },
+              {
+                model: 'gpt-5-codex',
+                runs: 600,
+                effortSeconds: 200000,
+                tokens: {
+                  input: 200000,
+                  cacheRead: 9000000,
+                  cacheWrite: 600000,
+                  output: 90000,
+                  reasoning: 1000,
+                  total: 8700000,
+                },
+              },
+              {
+                model: 'a-rather-long-codex-model-identifier-for-the-360-test',
+                runs: 234,
+                effortSeconds: 123440.5,
+                tokens: {
+                  input: 200000,
+                  cacheRead: 7100000,
+                  cacheWrite: 500000,
+                  output: 100000,
+                  reasoning: 2000,
+                  total: 9113904,
+                },
+              },
+            ],
+            byRole: [],
+            topProjects: [
+              {
+                slug: longSlug,
+                runs: 1000,
+                effortSeconds: 800000,
+                tokens: {
+                  input: 900000,
+                  cacheRead: 30000000,
+                  cacheWrite: 1000000,
+                  output: 600000,
+                  reasoning: 9000,
+                  total: 33500000,
+                },
+              },
+              {
+                slug: 'demo-project',
+                runs: 500,
+                effortSeconds: 200000,
+                tokens: {
+                  input: 200000,
+                  cacheRead: 8000000,
+                  cacheWrite: 500000,
+                  output: 80000,
+                  reasoning: 1000,
+                  total: 9700000,
+                },
+              },
+              {
+                slug: 'other-project',
+                runs: 200,
+                effortSeconds: 80000,
+                tokens: {
+                  input: 100000,
+                  cacheRead: 4000000,
+                  cacheWrite: 200000,
+                  output: 40000,
+                  reasoning: 500,
+                  total: 4900000,
+                },
+              },
+              {
+                slug: 'spectator_backend',
+                runs: 100,
+                effortSeconds: 40000,
+                tokens: {
+                  input: 0,
+                  cacheRead: 1500000,
+                  cacheWrite: 200000,
+                  output: 30000,
+                  reasoning: 1000,
+                  total: 1900000,
+                },
+              },
+              {
+                slug: 'rushr-web',
+                runs: 34,
+                effortSeconds: 3440.5,
+                tokens: {
+                  input: 0,
+                  cacheRead: 500000,
+                  cacheWrite: 100000,
+                  output: 30000,
+                  reasoning: 0,
+                  total: 700000,
+                },
+              },
+              {
+                slug: 'alpha',
+                runs: 0,
+                effortSeconds: 0,
+                tokens: {
+                  input: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  output: 0,
+                  reasoning: 0,
+                  total: 0,
+                },
+              },
+              {
+                slug: 'bravo',
+                runs: 0,
+                effortSeconds: 0,
+                tokens: {
+                  input: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  output: 0,
+                  reasoning: 0,
+                  total: 0,
+                },
+              },
+              {
+                slug: 'charlie',
+                runs: 0,
+                effortSeconds: 0,
+                tokens: {
+                  input: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  output: 0,
+                  reasoning: 0,
+                  total: 0,
+                },
+              },
+              {
+                slug: 'delta',
+                runs: 0,
+                effortSeconds: 0,
+                tokens: {
+                  input: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  output: 0,
+                  reasoning: 0,
+                  total: 0,
+                },
+              },
+              {
+                slug: 'echo',
+                runs: 0,
+                effortSeconds: 0,
+                tokens: {
+                  input: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  output: 0,
+                  reasoning: 0,
+                  total: 0,
+                },
+              },
+            ],
+          },
+        }),
+      );
+      settle(harness);
+
+      const host = harness.routeNativeElement as HTMLElement;
+      expect(host.querySelector('app-dashboard-agent-usage')).toBeTruthy();
+      const { doc, remove } = mountAt360([host]);
+      try {
+        expect(doc.documentElement.clientWidth).toBe(360);
+        expect(doc.documentElement.scrollWidth).toBeLessThanOrEqual(360);
+        const block = doc.querySelector('app-dashboard-agent-usage') as HTMLElement;
+        expect(block.getBoundingClientRect().right).toBeLessThanOrEqual(360);
+      } finally {
+        remove();
+      }
+    }));
     it('renders a populated process log at 360px with no horizontal scroll', fakeAsync(() => {
       const name = 'an_extremely_long_feature_identifier_name';
       const longToken = 'unbroken-token-without-any-spaces-'.repeat(6);

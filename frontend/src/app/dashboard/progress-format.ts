@@ -11,3 +11,8 @@ export const CHART_COLORS = {
   done: '#3ecf8e',
   remaining: '#3a4452',
 } as const;
+
+export const USAGE_CHART_COLORS = {
+  ranking: '#e8a33d',
+  model: '#8b95a5',
+} as const;

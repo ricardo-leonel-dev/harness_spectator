@@ -70,7 +70,8 @@ Supabase is already the target data platform.
      harness-state dashboard behind a valid Supabase session.
    - `src/app/dashboard/` — components that render harness state (features table with
      selectable rows, open session card, blocked features card, process log card with its
-     nested agent usage section, the cross-project progress overview at `/`) fetched via
+     nested agent usage section, the cross-project progress overview at `/`, and the
+     dashboard-level agent usage cards block nested inside that overview) fetched via
      `src/app/core/`.
    - `src/app/core/` — the `HarnessApiService` (the only place that calls Angular's
      `HttpClient` against the backend) and the `authInterceptor` that attaches the Supabase access
@@ -102,9 +103,11 @@ Supabase is already the target data platform.
      focus-trap, a11y, drag-drop), never for a themed/pre-styled component. Every visible component
      is hand-built and styled with Tailwind utility classes (see `docs/conventions.md`).
      `@swimlane/ngx-charts` is the one library used for chart rendering inside the progress
-     overview (gauge, doughnut, stacked horizontal bars) — its modules are imported only by that
-     overview, with chart data passed as ordinary typed objects and chart chrome restyled via
-     Tailwind arbitrary variants and one tooltip block in `src/styles.css`.
+     overview and its agent usage block (gauge, doughnut, stacked horizontal bars, plus the
+     model and ranking horizontal bar charts) — its modules are imported only by that overview
+     (and, transitively, the agent usage block it renders), with chart data passed as ordinary
+     typed objects and chart chrome restyled via Tailwind arbitrary variants and one tooltip
+     block in `src/styles.css`.
    - **Offline-first.** No dependency, asset, `<link>`, or `<script>` may reach an external CDN at
      runtime — no Google Fonts, no cdnjs/unpkg/jsdelivr, no icon-font service. This app must render
      correctly with zero internet access (aside from its own Supabase Auth / backend API calls,

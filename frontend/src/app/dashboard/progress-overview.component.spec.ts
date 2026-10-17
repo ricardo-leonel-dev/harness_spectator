@@ -385,4 +385,139 @@ describe('ProgressOverviewComponent', () => {
     expect(strip.className).toContain('grid-cols-1');
     expect(strip.className).toContain('lg:grid-cols-[1fr_1.3fr]');
   });
+
+  it('sends one dashboard request and renders the usage block last inside the overview (R1, R2, R5)', fakeAsync(() => {
+    const f = TestBed.createComponent(ProgressOverviewComponent);
+    f.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const req = http.expectOne(DASHBOARD_URL);
+    expect(req.request.method).toBe('GET');
+    req.flush({
+      overall: {
+        done: 31,
+        total: 52,
+        percentage: 59.62,
+        byStatus: {
+          pending: 12,
+          specDrafting: 1,
+          specReady: 2,
+          inProgress: 3,
+          blocked: 3,
+          done: 31,
+        },
+      },
+      topProjects: [{ slug: 'spectator_backend', done: 7, total: 8, percentage: 87.5 }],
+      agentUsage: {
+        runs: 1834,
+        effortSeconds: 1123440.5,
+        tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 48213904 },
+        byRuntime: {
+          claude: {
+            runs: 1200,
+            effortSeconds: 900000,
+            tokens: {
+              input: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              output: 0,
+              reasoning: 0,
+              total: 39500000,
+            },
+          },
+          codex: {
+            runs: 634,
+            effortSeconds: 223440.5,
+            tokens: {
+              input: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              output: 0,
+              reasoning: 0,
+              total: 8713904,
+            },
+          },
+        },
+        byModel: [],
+        byRole: [],
+        topProjects: [],
+      },
+    });
+    tick();
+    f.detectChanges();
+    http.expectNone(DASHBOARD_URL);
+
+    const host = f.nativeElement as HTMLElement;
+    const overview = host.querySelector('[data-overview]') as HTMLElement;
+    const lastChild = overview.lastElementChild as HTMLElement;
+    expect(lastChild.matches('app-dashboard-agent-usage')).toBe(true);
+    expect(lastChild.querySelector('[data-usage-overview]')).toBeTruthy();
+    expect(host.querySelector('[data-usage-empty]')).toBeNull();
+  }));
+
+  it('renders the usage block when overall.total is 0 (R5)', fakeAsync(() => {
+    const f = TestBed.createComponent(ProgressOverviewComponent);
+    f.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne(DASHBOARD_URL).flush({
+      overall: {
+        done: 0,
+        total: 0,
+        percentage: 0,
+        byStatus: {
+          pending: 0,
+          specDrafting: 0,
+          specReady: 0,
+          inProgress: 0,
+          blocked: 0,
+          done: 0,
+        },
+      },
+      topProjects: [],
+    });
+    tick();
+    f.detectChanges();
+
+    const host = f.nativeElement as HTMLElement;
+    const overview = host.querySelector('[data-overview]') as HTMLElement;
+    const lastChild = overview.lastElementChild as HTMLElement;
+    expect(lastChild.matches('app-dashboard-agent-usage')).toBe(true);
+    expect(lastChild.querySelector('[data-usage-overview]')).toBeTruthy();
+  }));
+
+  it('does not render the usage block while loading, on error or on 401 (R3)', fakeAsync(() => {
+    const f = TestBed.createComponent(ProgressOverviewComponent);
+    f.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+
+    expect((f.nativeElement as HTMLElement).querySelector('[data-usage-overview]')).toBeNull();
+
+    const first = http.expectOne(DASHBOARD_URL);
+    first.flush({ error: 'boom' }, { status: 500, statusText: 'Server Error' });
+    tick();
+    f.detectChanges();
+    expect((f.nativeElement as HTMLElement).querySelector('[data-usage-overview]')).toBeNull();
+
+    (f.nativeElement.querySelector('[data-overview-retry]') as HTMLButtonElement).click();
+    f.detectChanges();
+    const second = http.expectOne(DASHBOARD_URL);
+    second.flush({
+      overall: {
+        done: 0,
+        total: 0,
+        percentage: 0,
+        byStatus: {
+          pending: 0,
+          specDrafting: 0,
+          specReady: 0,
+          inProgress: 0,
+          blocked: 0,
+          done: 0,
+        },
+      },
+      topProjects: [],
+    });
+    tick();
+    f.detectChanges();
+    expect((f.nativeElement as HTMLElement).querySelector('[data-usage-overview]')).toBeTruthy();
+  }));
 });
