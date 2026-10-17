@@ -12,6 +12,7 @@ import {
 } from './dashboard-agent-usage.component';
 import { DashboardAgentUsage, UsageBucket } from '../core/harness-api.service';
 import { formatExactTokens, formatTokens } from './usage-format';
+import { USAGE_CHART_COLORS } from './progress-format';
 
 @Component({ template: '' })
 class BlankComponent {}
@@ -310,6 +311,30 @@ describe('DashboardAgentUsageComponent', () => {
     expect(codexTokens.getAttribute('value')).toBe('8713904');
   });
 
+  it('labels a runtime row with exactly one run as singular "run"', () => {
+    const fixture = TestBed.createComponent(DashboardAgentUsageComponent);
+    setUsage(
+      fixture,
+      usage({
+        byRuntime: {
+          claude: bucket({
+            runs: 1,
+            tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 10 },
+          }),
+          codex: bucket({ runs: 2 }),
+        },
+      }),
+    );
+    const runs = (r: string): string =>
+      (
+        fixture.nativeElement.querySelector(
+          `[data-usage-runtime="${r}"] [data-usage-runtime-runs]`,
+        ) as HTMLElement
+      ).textContent?.trim() ?? '';
+    expect(runs('claude')).toBe(`${formatTokens(1)} run`);
+    expect(runs('codex')).toBe(`${formatTokens(2)} runs`);
+  });
+
   it('sizes split segments by token share and omits zero runtimes', () => {
     const fixture = TestBed.createComponent(DashboardAgentUsageComponent);
     setUsage(
@@ -355,9 +380,54 @@ describe('DashboardAgentUsageComponent', () => {
         },
       }),
     );
-    expect(fixture.nativeElement.querySelector('[data-usage-split]')).toBeNull();
-    const claudeLabel = fixture.nativeElement.querySelector('[data-usage-split-claude]');
-    expect(claudeLabel).toBeNull();
+    const track = fixture.nativeElement.querySelector('[data-usage-split]') as HTMLElement;
+    expect(track).toBeTruthy();
+    expect(track.querySelectorAll('[data-usage-split-segment]').length).toBe(0);
+    expect(fixture.nativeElement.querySelector('[data-usage-split-claude]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-usage-split-codex]')).toBeNull();
+  });
+
+  it('keeps split labels consistent with the visible segments', () => {
+    const fixture = TestBed.createComponent(DashboardAgentUsageComponent);
+    const tok = (total: number) => ({
+      input: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      output: 0,
+      reasoning: 0,
+      total,
+    });
+    const label = (r: string): string =>
+      (
+        fixture.nativeElement.querySelector(`[data-usage-split-${r}]`) as HTMLElement
+      ).textContent?.trim() ?? '';
+
+    // 99.6 / 0.4: both segments visible, so neither label may read 100% / 0%.
+    setUsage(
+      fixture,
+      usage({
+        byRuntime: {
+          claude: bucket({ runs: 1, tokens: tok(996) }),
+          codex: bucket({ runs: 1, tokens: tok(4) }),
+        },
+      }),
+    );
+    expect(fixture.nativeElement.querySelectorAll('[data-usage-split-segment]').length).toBe(2);
+    expect(label('claude')).toBe('>99%');
+    expect(label('codex')).toBe('<1%');
+
+    // 50.5 / 49.5: independent rounding would give 51% / 50%; labels must add up to 100.
+    setUsage(
+      fixture,
+      usage({
+        byRuntime: {
+          claude: bucket({ runs: 1, tokens: tok(505) }),
+          codex: bucket({ runs: 1, tokens: tok(495) }),
+        },
+      }),
+    );
+    expect(label('claude')).toBe('51%');
+    expect(label('codex')).toBe('49%');
   });
 
   it('passes one model point per model in order, labelling null as (no model)', () => {
@@ -422,15 +492,17 @@ describe('DashboardAgentUsageComponent', () => {
     const fixture = TestBed.createComponent(DashboardAgentUsageComponent);
     setUsage(fixture, usage({ byModel: [] }));
 
-    const empty = fixture.nativeElement.querySelector('[data-usage-models-empty]') as HTMLElement;
-    expect(empty).toBeTruthy();
-    expect(empty.textContent?.trim()).toBe('No model recorded for any run.');
     const modelsContainer = (fixture.nativeElement as HTMLElement).querySelector(
       '[data-usage-models]',
-    );
-    expect(modelsContainer).toBeNull();
-    const rankingChartStill = fixture.debugElement.query(By.directive(BarHorizontalComponent));
-    expect(rankingChartStill).toBeTruthy();
+    ) as HTMLElement;
+    expect(modelsContainer).toBeTruthy();
+    expect(modelsContainer.textContent?.trim()).toBe('No model recorded for any run.');
+    expect(modelsContainer.querySelector('[data-usage-models-empty]')).toBeTruthy();
+    expect(modelsContainer.querySelector('ngx-charts-bar-horizontal')).toBeNull();
+    expect(modelsContainer.style.height).toBe('');
+    const charts = fixture.debugElement.queryAll(By.directive(BarHorizontalComponent));
+    expect(charts.length).toBe(1);
+    expect((charts[0].nativeElement as HTMLElement).closest('[data-usage-ranking]')).toBeTruthy();
   });
 
   it('does not navigate from the model chart', () => {
@@ -551,6 +623,25 @@ describe('DashboardAgentUsageComponent', () => {
       expect(chart.xAxisTickFormatting).toBe(component.axisFormat);
       expect(chart.animations).toBe(false);
       expect(chart.tooltipTemplate).toBeTruthy();
+    }
+  });
+
+  it('colors each chart from its scheme domain', () => {
+    const fixture = TestBed.createComponent(DashboardAgentUsageComponent);
+    setUsage(fixture, usage());
+
+    const charts = fixture.debugElement.queryAll(By.directive(BarHorizontalComponent));
+    const domainOf = (selector: string): unknown => {
+      const d = charts.find((c) => (c.nativeElement as HTMLElement).closest(selector) !== null);
+      const scheme = (d?.componentInstance as BarHorizontalComponent).scheme as {
+        domain: string[];
+      };
+      return scheme.domain;
+    };
+    expect(domainOf('[data-usage-models]')).toEqual([USAGE_CHART_COLORS.model]);
+    expect(domainOf('[data-usage-ranking]')).toEqual([USAGE_CHART_COLORS.ranking]);
+    for (const c of charts) {
+      expect((c.componentInstance as BarHorizontalComponent).customColors).toBeUndefined();
     }
   });
 

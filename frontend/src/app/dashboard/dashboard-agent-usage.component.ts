@@ -145,30 +145,32 @@ export const NO_MODEL_LABEL = '(no model)';
             <h3 class="m-0 mb-2 font-mono text-label font-semibold uppercase text-muted">
               By runtime
             </h3>
-            @if (splitSegments().length > 0) {
-              <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2">
+              @if (splitSegments().length > 0) {
                 <span class="font-mono text-2xs text-soft tabular-nums" data-usage-split-claude
                   >{{ splitPercent(splitSegments(), 'claude') }}%</span
                 >
-                <div
-                  class="flex h-2.5 flex-1 gap-0.5 overflow-hidden rounded-sm bg-edge"
-                  aria-hidden="true"
-                  data-usage-split
-                >
-                  @for (segment of splitSegments(); track segment.runtime) {
-                    <span
-                      class="h-full"
-                      [class]="segment.runtime === 'claude' ? 'bg-signal' : 'bg-dim'"
-                      [style.width.%]="segment.share"
-                      [attr.data-usage-split-segment]="segment.runtime"
-                    ></span>
-                  }
-                </div>
+              }
+              <div
+                class="flex h-2.5 flex-1 gap-0.5 overflow-hidden rounded-sm bg-edge"
+                aria-hidden="true"
+                data-usage-split
+              >
+                @for (segment of splitSegments(); track segment.runtime) {
+                  <span
+                    class="h-full"
+                    [class]="segment.runtime === 'claude' ? 'bg-signal' : 'bg-dim'"
+                    [style.width.%]="segment.share"
+                    [attr.data-usage-split-segment]="segment.runtime"
+                  ></span>
+                }
+              </div>
+              @if (splitSegments().length > 0) {
                 <span class="font-mono text-2xs text-soft tabular-nums" data-usage-split-codex
                   >{{ splitPercent(splitSegments(), 'codex') }}%</span
                 >
-              </div>
-            }
+              }
+            </div>
 
             <ul class="m-0 mt-2 flex list-none flex-col gap-1 p-0">
               @for (runtime of runtimes; track runtime) {
@@ -194,7 +196,8 @@ export const NO_MODEL_LABEL = '(no model)';
                     [attr.value]="u.byRuntime[runtime].runs"
                     [attr.title]="runsTitle(u.byRuntime[runtime].runs)"
                     data-usage-runtime-runs
-                    >{{ formatTokens(u.byRuntime[runtime].runs) }} runs</data
+                    >{{ formatTokens(u.byRuntime[runtime].runs)
+                    }}{{ runsLabel(u.byRuntime[runtime].runs) }}</data
                   >
                 </li>
               }
@@ -203,20 +206,22 @@ export const NO_MODEL_LABEL = '(no model)';
             <h3 class="m-0 mb-2 mt-4 font-mono text-label font-semibold uppercase text-muted">
               By model
             </h3>
-            @if (u.byModel.length === 0) {
-              <p class="m-0 py-2 text-center font-sans text-sm text-muted" data-usage-models-empty>
-                No model recorded for any run.
-              </p>
-            } @else {
-              <div
-                class="w-full overflow-hidden [&_.bar]:cursor-default [&_.tick_text]:!fill-muted [&_.gridline-path]:!stroke-edge"
-                [style.height.px]="modelChartHeight()"
-                data-usage-models
-              >
+            <div
+              class="w-full overflow-hidden [&_.bar]:cursor-default [&_.tick_text]:!fill-muted [&_.gridline-path]:!stroke-edge"
+              [style.height.px]="u.byModel.length === 0 ? null : modelChartHeight()"
+              data-usage-models
+            >
+              @if (u.byModel.length === 0) {
+                <p
+                  class="m-0 py-2 text-center font-sans text-sm text-muted"
+                  data-usage-models-empty
+                >
+                  No model recorded for any run.
+                </p>
+              } @else {
                 <ngx-charts-bar-horizontal
                   [results]="modelPoints()"
                   [scheme]="modelScheme"
-                  [customColors]="modelColors()"
                   [xAxis]="true"
                   [yAxis]="true"
                   [showGridLines]="true"
@@ -236,8 +241,8 @@ export const NO_MODEL_LABEL = '(no model)';
                     </div>
                   </ng-template>
                 </ngx-charts-bar-horizontal>
-              </div>
-            }
+              }
+            </div>
           </div>
 
           <div class="min-w-0 rounded-md border border-line bg-panel p-3.5" data-usage-ranking>
@@ -252,7 +257,6 @@ export const NO_MODEL_LABEL = '(no model)';
               <ngx-charts-bar-horizontal
                 [results]="rankingPoints()"
                 [scheme]="rankingScheme"
-                [customColors]="rankingColors()"
                 [xAxis]="true"
                 [yAxis]="true"
                 [showGridLines]="true"
@@ -388,10 +392,6 @@ export class DashboardAgentUsageComponent {
     return Math.max(u.topProjects.length * 30 + 40, 74);
   });
 
-  readonly modelColors = computed(() => [{ name: 'models', value: USAGE_CHART_COLORS.model }]);
-
-  readonly rankingColors = computed(() => [{ name: 'ranking', value: USAGE_CHART_COLORS.ranking }]);
-
   readonly axisFormat = (v: number): string => formatTokens(v);
 
   tokensTitle(n: number): string {
@@ -406,10 +406,21 @@ export class DashboardAgentUsageComponent {
     return n === 1 ? ' run' : ' runs';
   }
 
+  /**
+   * Percentage label for one side of the split. Both labels stay consistent with the visible
+   * segments: a present runtime never reads `0%`/`100%` (it reads `<1%`/`>99%`), and in the
+   * middle range codex is derived as `100 - claude` so the two labels always add up to 100.
+   */
   splitPercent(segments: SplitSegment[], runtime: 'claude' | 'codex'): string {
-    const seg = segments.find((s) => s.runtime === runtime);
-    if (!seg) return '0';
-    return Math.round(seg.share).toString();
+    const share = (r: 'claude' | 'codex'): number =>
+      segments.find((s) => s.runtime === r)?.share ?? 0;
+    const own = share(runtime);
+    if (own <= 0) return '0';
+    if (own >= 100) return '100';
+    if (own < 1) return '<1';
+    if (own > 99) return '>99';
+    const claudeRounded = Math.round(share('claude'));
+    return (runtime === 'claude' ? claudeRounded : 100 - claudeRounded).toString();
   }
 
   onRankingSelect(event: unknown): void {
