@@ -332,6 +332,50 @@ async fn set_feature_acceptance(pool: &PgPool, feature_id: i64, items: &[&str]) 
         .unwrap();
 }
 
+async fn set_feature_lean_fields(
+    pool: &PgPool,
+    feature_id: i64,
+    mode: Option<&str>,
+    plan_approval: bool,
+    plan_approved_by: Option<&str>,
+    plan_approved_at: Option<chrono::DateTime<chrono::Utc>>,
+) {
+    sqlx::query(
+        "UPDATE features
+         SET mode = $1, plan_approval = $2, plan_approved_by = $3, plan_approved_at = $4
+         WHERE id = $5",
+    )
+    .bind(mode)
+    .bind(plan_approval)
+    .bind(plan_approved_by)
+    .bind(plan_approved_at)
+    .bind(feature_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn set_session_review(
+    pool: &PgPool,
+    session_id: i64,
+    review_status: Option<&str>,
+    reviewed_by: Option<&str>,
+    reviewed_at: Option<chrono::DateTime<chrono::Utc>>,
+) {
+    sqlx::query(
+        "UPDATE session_log
+         SET review_status = $1, reviewed_by = $2, reviewed_at = $3
+         WHERE id = $4",
+    )
+    .bind(review_status)
+    .bind(reviewed_by)
+    .bind(reviewed_at)
+    .bind(session_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn fetch_entry_created_at(pool: &PgPool, entry_id: i64) -> String {
     sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
         "SELECT created_at FROM session_log_entries WHERE id = $1",
@@ -564,10 +608,14 @@ async fn project_state_returns_mirror_data_for_the_requested_slug() {
     assert_eq!(
         body["features"],
         json!([
-            { "featureNumber": 1, "name": "first_feat", "title": "Title of first_feat", "status": "in_progress", "sdd": true },
-            { "featureNumber": 2, "name": "second_feat", "title": "Title of second_feat", "status": "done", "sdd": false },
-            { "featureNumber": 4, "name": "blocked_feat", "title": "Title of blocked_feat", "status": "blocked", "sdd": false },
-            { "featureNumber": 5, "name": "blocked_no_log", "title": "Title of blocked_no_log", "status": "blocked", "sdd": false }
+            { "featureNumber": 1, "name": "first_feat", "title": "Title of first_feat", "status": "in_progress", "sdd": true,
+              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null },
+            { "featureNumber": 2, "name": "second_feat", "title": "Title of second_feat", "status": "done", "sdd": false,
+              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null },
+            { "featureNumber": 4, "name": "blocked_feat", "title": "Title of blocked_feat", "status": "blocked", "sdd": false,
+              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null },
+            { "featureNumber": 5, "name": "blocked_no_log", "title": "Title of blocked_no_log", "status": "blocked", "sdd": false,
+              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null }
         ])
     );
     assert_eq!(body["openSession"]["agent"], "implementer");
@@ -581,6 +629,55 @@ async fn project_state_returns_mirror_data_for_the_requested_slug() {
             { "name": "blocked_no_log", "note": "" }
         ])
     );
+}
+
+#[tokio::test]
+async fn project_state_exposes_lean_mode_feature_fields() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let project = seed_project(&pool, "test-project", None, false).await;
+    let approved = seed_feature(
+        &pool,
+        project,
+        1,
+        "approved_feat",
+        "in_progress",
+        false,
+        false,
+    )
+    .await;
+    seed_feature(&pool, project, 2, "plain_feat", "pending", false, false).await;
+
+    let approved_at = chrono::DateTime::parse_from_rfc3339("2026-02-03T04:05:06Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    set_feature_lean_fields(
+        &pool,
+        approved,
+        Some("normal"),
+        true,
+        Some("ricardo"),
+        Some(approved_at),
+    )
+    .await;
+
+    let (status, body) = get(pool, &state_path("test-project"), Some(valid_token())).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let features = body["features"].as_array().expect("features array");
+    assert_eq!(features.len(), 2);
+
+    let first = &features[0];
+    assert_eq!(first["mode"], "normal");
+    assert_eq!(first["planApproval"], true);
+    assert_eq!(first["planApprovedBy"], "ricardo");
+    assert_eq!(first["planApprovedAt"], approved_at.to_rfc3339());
+
+    let second = &features[1];
+    assert_eq!(second["mode"], Value::Null);
+    assert_eq!(second["planApproval"], false);
+    assert_eq!(second["planApprovedBy"], Value::Null);
+    assert_eq!(second["planApprovedAt"], Value::Null);
 }
 
 #[tokio::test]
@@ -909,6 +1006,158 @@ async fn feature_log_returns_header_and_sessions() {
     assert_eq!(entries[0]["createdAt"], entry1_ts);
     assert_eq!(entries[1]["entry"], "Implementation complete");
     assert_eq!(entries[1]["createdAt"], entry2_ts);
+}
+
+#[tokio::test]
+async fn feature_log_exposes_lean_mode_feature_fields() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let project = seed_project(&pool, "test-project", None, false).await;
+    let feature = seed_feature(&pool, project, 1, "lean_feat", "in_progress", false, false).await;
+
+    let approved_at = chrono::DateTime::parse_from_rfc3339("2026-02-03T04:05:06Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    set_feature_lean_fields(
+        &pool,
+        feature,
+        Some("risk"),
+        true,
+        Some("ricardo"),
+        Some(approved_at),
+    )
+    .await;
+
+    let (status, body) = get(
+        pool.clone(),
+        &log_path("test-project", "lean_feat"),
+        Some(valid_token()),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["feature"]["mode"], "risk");
+    assert_eq!(body["feature"]["planApproval"], true);
+    assert_eq!(body["feature"]["planApprovedBy"], "ricardo");
+    assert_eq!(body["feature"]["planApprovedAt"], approved_at.to_rfc3339());
+}
+
+#[tokio::test]
+async fn feature_log_exposes_per_session_review_fields() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let project = seed_project(&pool, "test-project", None, false).await;
+    let feature = seed_feature(
+        &pool,
+        project,
+        1,
+        "review_feat",
+        "in_progress",
+        false,
+        false,
+    )
+    .await;
+
+    let approved = seed_log_session(
+        &pool,
+        project,
+        LogSessionSeed {
+            local_id: 1,
+            feature_id: Some(feature),
+            agent: "approved-agent",
+            started_minutes_ago: 30,
+            started_at_override: None,
+            plan: None,
+            next_step: None,
+            changes: None,
+            verification: None,
+            closure: None,
+            closed: true,
+            paused: false,
+            deleted: false,
+        },
+    )
+    .await;
+    let reviewed_at = chrono::DateTime::parse_from_rfc3339("2026-02-03T04:05:06Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    set_session_review(
+        &pool,
+        approved,
+        Some("approved"),
+        Some("ricardo"),
+        Some(reviewed_at),
+    )
+    .await;
+
+    let lean = seed_log_session(
+        &pool,
+        project,
+        LogSessionSeed {
+            local_id: 2,
+            feature_id: Some(feature),
+            agent: "lean-agent",
+            started_minutes_ago: 10,
+            started_at_override: None,
+            plan: None,
+            next_step: None,
+            changes: None,
+            verification: None,
+            closure: None,
+            closed: true,
+            paused: false,
+            deleted: false,
+        },
+    )
+    .await;
+    set_session_review(&pool, lean, Some("lean"), None, None).await;
+
+    seed_log_session(
+        &pool,
+        project,
+        LogSessionSeed {
+            local_id: 3,
+            feature_id: Some(feature),
+            agent: "unreviewed-agent",
+            started_minutes_ago: 5,
+            started_at_override: None,
+            plan: None,
+            next_step: None,
+            changes: None,
+            verification: None,
+            closure: None,
+            closed: false,
+            paused: false,
+            deleted: false,
+        },
+    )
+    .await;
+
+    let (status, body) = get(
+        pool.clone(),
+        &log_path("test-project", "review_feat"),
+        Some(valid_token()),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let sessions = body["sessions"].as_array().expect("sessions array");
+    assert_eq!(sessions.len(), 3);
+
+    let first = &sessions[0];
+    assert_eq!(first["reviewStatus"], "approved");
+    assert_eq!(first["reviewedBy"], "ricardo");
+    assert_eq!(first["reviewedAt"], reviewed_at.to_rfc3339());
+
+    let second = &sessions[1];
+    assert_eq!(second["reviewStatus"], "lean");
+    assert_eq!(second["reviewedBy"], Value::Null);
+    assert_eq!(second["reviewedAt"], Value::Null);
+
+    let third = &sessions[2];
+    assert_eq!(third["reviewStatus"], Value::Null);
+    assert_eq!(third["reviewedBy"], Value::Null);
+    assert_eq!(third["reviewedAt"], Value::Null);
 }
 
 #[tokio::test]

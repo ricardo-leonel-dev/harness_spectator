@@ -72,6 +72,10 @@ struct FeatureDbRow {
     title: String,
     status: String,
     sdd: bool,
+    mode: Option<String>,
+    plan_approval: bool,
+    plan_approved_by: Option<String>,
+    plan_approved_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +86,13 @@ pub struct FeatureRow {
     pub title: String,
     pub status: String,
     pub sdd: bool,
+    pub mode: Option<String>,
+    #[serde(rename = "planApproval")]
+    pub plan_approval: bool,
+    #[serde(rename = "planApprovedBy")]
+    pub plan_approved_by: Option<String>,
+    #[serde(rename = "planApprovedAt")]
+    pub plan_approved_at: Option<String>,
 }
 
 impl From<FeatureDbRow> for FeatureRow {
@@ -92,6 +103,10 @@ impl From<FeatureDbRow> for FeatureRow {
             title: r.title,
             status: r.status,
             sdd: r.sdd,
+            mode: r.mode,
+            plan_approval: r.plan_approval,
+            plan_approved_by: r.plan_approved_by,
+            plan_approved_at: r.plan_approved_at.map(|t| t.to_rfc3339()),
         }
     }
 }
@@ -182,7 +197,8 @@ pub async fn read_project_state(
     let (project_id, slug, description) = project_row.ok_or(ApiError::NotFound)?;
 
     let features: Vec<FeatureDbRow> = sqlx::query_as(
-        "SELECT feature_number, name, title, status::text AS status, sdd
+        "SELECT feature_number, name, title, status::text AS status, sdd,
+                mode, plan_approval, plan_approved_by, plan_approved_at
          FROM features
          WHERE project_id = $1
            AND deleted_at IS NULL
@@ -261,6 +277,13 @@ pub struct FeatureHeader {
     pub sdd: bool,
     pub description: Option<String>,
     pub acceptance: Vec<String>,
+    pub mode: Option<String>,
+    #[serde(rename = "planApproval")]
+    pub plan_approval: bool,
+    #[serde(rename = "planApprovedBy")]
+    pub plan_approved_by: Option<String>,
+    #[serde(rename = "planApprovedAt")]
+    pub plan_approved_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -280,6 +303,12 @@ pub struct ProcessLogSession {
     pub changes: Option<Vec<String>>,
     pub verification: Option<String>,
     pub closure: Option<String>,
+    #[serde(rename = "reviewStatus")]
+    pub review_status: Option<String>,
+    #[serde(rename = "reviewedBy")]
+    pub reviewed_by: Option<String>,
+    #[serde(rename = "reviewedAt")]
+    pub reviewed_at: Option<String>,
     pub entries: Vec<ProcessLogEntry>,
 }
 
@@ -300,6 +329,10 @@ struct FeatureHeaderDbRow {
     sdd: bool,
     description: Option<String>,
     acceptance: Vec<String>,
+    mode: Option<String>,
+    plan_approval: bool,
+    plan_approved_by: Option<String>,
+    plan_approved_at: Option<DateTime<Utc>>,
 }
 
 impl From<FeatureHeaderDbRow> for FeatureHeader {
@@ -312,6 +345,10 @@ impl From<FeatureHeaderDbRow> for FeatureHeader {
             sdd: r.sdd,
             description: r.description,
             acceptance: r.acceptance,
+            mode: r.mode,
+            plan_approval: r.plan_approval,
+            plan_approved_by: r.plan_approved_by,
+            plan_approved_at: r.plan_approved_at.map(|t| t.to_rfc3339()),
         }
     }
 }
@@ -329,6 +366,9 @@ struct ProcessLogSessionDbRow {
     changes: Option<Vec<String>>,
     verification: Option<String>,
     closure: Option<String>,
+    review_status: Option<String>,
+    reviewed_by: Option<String>,
+    reviewed_at: Option<DateTime<Utc>>,
 }
 
 impl From<ProcessLogSessionDbRow> for ProcessLogSession {
@@ -344,6 +384,9 @@ impl From<ProcessLogSessionDbRow> for ProcessLogSession {
             changes: r.changes,
             verification: r.verification,
             closure: r.closure,
+            review_status: r.review_status,
+            reviewed_by: r.reviewed_by,
+            reviewed_at: r.reviewed_at.map(|t| t.to_rfc3339()),
             entries: Vec::new(),
         }
     }
@@ -748,7 +791,8 @@ pub async fn read_feature_log(
     let project_id = project_row.ok_or(ApiError::NotFound)?;
 
     let feature_row: Option<FeatureHeaderDbRow> = sqlx::query_as(
-        "SELECT id, feature_number, name, title, status::text AS status, sdd, description, acceptance
+        "SELECT id, feature_number, name, title, status::text AS status, sdd, description, acceptance,
+                mode, plan_approval, plan_approved_by, plan_approved_at
          FROM features
          WHERE project_id = $1 AND name = $2 AND deleted_at IS NULL",
     )
@@ -762,7 +806,8 @@ pub async fn read_feature_log(
 
     let session_rows: Vec<ProcessLogSessionDbRow> = sqlx::query_as(
         "SELECT id, local_id, agent, started_at, closed_at, paused_at,
-                plan, next_step, changes, verification, closure
+                plan, next_step, changes, verification, closure,
+                review_status, reviewed_by, reviewed_at
          FROM session_log
          WHERE project_id = $1 AND feature_id = $2 AND deleted_at IS NULL
          ORDER BY started_at ASC, id ASC",
