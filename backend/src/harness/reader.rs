@@ -408,6 +408,8 @@ pub struct DashboardResponse {
     pub top_projects: Vec<ProjectProgress>,
     #[serde(rename = "agentUsage")]
     pub agent_usage: DashboardAgentUsage,
+    #[serde(rename = "closedBy")]
+    pub closed_by: ClosedByBreakdown,
 }
 
 #[derive(Debug, Serialize)]
@@ -430,6 +432,36 @@ pub struct StatusBreakdown {
     pub in_progress: i64,
     pub blocked: i64,
     pub done: i64,
+}
+
+/// How the closed features were closed, by the closure path of their closing
+/// session. `none` covers every feature whose closing session carries no
+/// recognized path.
+#[derive(Debug, Default, Serialize)]
+pub struct ClosedByBreakdown {
+    pub approved: i64,
+    pub quick: i64,
+    pub lean: i64,
+    pub none: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct ClosedByCountsDbRow {
+    approved: i64,
+    quick: i64,
+    lean: i64,
+    none: i64,
+}
+
+impl From<ClosedByCountsDbRow> for ClosedByBreakdown {
+    fn from(r: ClosedByCountsDbRow) -> Self {
+        Self {
+            approved: r.approved,
+            quick: r.quick,
+            lean: r.lean,
+            none: r.none,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -679,6 +711,36 @@ pub async fn read_dashboard(pool: &PgPool) -> Result<DashboardResponse, ApiError
     });
     projects.truncate(TOP_PROJECTS_LIMIT);
 
+    // Closure path of every closed feature. The counted set is the one of
+    // `overall.done` (`status = 'done'`, feature and project not deleted), so
+    // the four buckets always add up to `overall.done`. `DISTINCT ON` picks the
+    // closing session of every feature in one pass over `session_log` — the
+    // latest `closed_at`, ties broken by the highest id — instead of scanning
+    // the whole table once per closed feature.
+    let closed_by_row: ClosedByCountsDbRow = sqlx::query_as(
+        "WITH closing AS (
+           SELECT DISTINCT ON (sl.feature_id) sl.feature_id, sl.review_status
+           FROM session_log sl
+           WHERE sl.deleted_at IS NULL
+             AND sl.closed_at IS NOT NULL
+             AND sl.feature_id IS NOT NULL
+           ORDER BY sl.feature_id, sl.closed_at DESC, sl.id DESC
+         )
+         SELECT COUNT(*) FILTER (WHERE c.review_status = 'approved') AS approved,
+                COUNT(*) FILTER (WHERE c.review_status = 'quick')    AS quick,
+                COUNT(*) FILTER (WHERE c.review_status = 'lean')     AS lean,
+                COUNT(*) FILTER (WHERE c.review_status IS NULL
+                                   OR c.review_status NOT IN ('approved', 'quick', 'lean')) AS none
+         FROM features f
+         JOIN projects p ON p.id = f.project_id
+         LEFT JOIN closing c ON c.feature_id = f.id
+         WHERE p.deleted_at IS NULL
+           AND f.deleted_at IS NULL
+           AND f.status = 'done'",
+    )
+    .fetch_one(pool)
+    .await?;
+
     let usage_rows: Vec<AgentUsageGroupDbRow> = sqlx::query_as(
         "SELECT p.slug,
                 r.runtime,
@@ -711,6 +773,7 @@ pub async fn read_dashboard(pool: &PgPool) -> Result<DashboardResponse, ApiError
         },
         top_projects: projects,
         agent_usage: fold_agent_usage(&usage_rows),
+        closed_by: closed_by_row.into(),
     })
 }
 

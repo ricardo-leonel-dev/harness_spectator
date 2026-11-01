@@ -193,6 +193,19 @@ frontend (separate project/process)
           projects with a counted run, ordered by `tokens.total` descending then `slug`
           ascending (byte-wise); every slug resolves on `/state` like the progress
           ranking. With no counted run, `agentUsage` is all zero buckets and empty arrays.
+          Feature 14 (`dashboard_closure_path_counts`) adds a fourth key, `closedBy`:
+          `{approved, quick, lean, none}`, the closure path of every closed feature.
+          A counted feature is a `done` feature of a non-deleted project whose own
+          `deleted_at` is null — the same set as `overall.done`, so `approved + quick
+          + lean + none` always equals `overall.done`. Its closing session is the
+          feature's non-deleted `session_log` row with `closed_at` not null, the latest
+          `closed_at` first and ties broken by the highest `session_log.id`; an open
+          (unclosed) session is never a closing session. That session's `review_status`
+          (free text, matched exactly and case-sensitively) picks the bucket:
+          `approved`, `quick` or `lean`. Every other feature counts as `none` — no
+          closing session at all, or a closing session whose `review_status` is null,
+          `changes_requested` or any other value. The four counts are always present
+          and zero-filled.
         - GET /api/harness/features?status=<status> (feature 11: `features_by_status_api`):
           every non-deleted feature of a non-deleted project whose `status` equals the query
           value, as `[{projectSlug, name, title, status}]`, ordered by `projectSlug` ascending
@@ -243,9 +256,10 @@ the toolkit's `0005_lean_mode.sql` verbatim (the four `features` columns, the th
 columns, the `active_features` and `active_sessions` views); all three are applied by the tests'
 `TestDb` helper and never run against the mirror.
 
-The `/state` and feature-log routes read the columns `0005_lean_mode.sql` added to the mirror, so a
-mirror without that migration answers `500 {"error":"internal error"}` on both of them — the columns
-the reader selects do not exist there. Every other route is unaffected.
+The `/state` and feature-log routes read the columns `0005_lean_mode.sql` added to the mirror, and
+the dashboard reads `session_log.review_status` (feature 14, `closedBy`), so a mirror without that
+migration answers `500 {"error":"internal error"}` on those three routes — the columns the reader
+selects do not exist there. Every other route is unaffected.
 
 The agent-usage route reads `agent_runs` directly over `DATABASE_URL`, like every other route, so
 serving data depends on the toolkit's `db/migrations/0004_agent_runs.sql` (the table) and
