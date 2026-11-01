@@ -205,17 +205,26 @@ frontend (separate project/process)
   -> JSON response
 ```
 
-The `feature_process_log` response has no `notes` key and no `reviewStatus` /
-`reviewedBy` / `reviewedAt`: the toolkit's Postgres mirror does not currently
-carry `feature_notes` (per `db/migrations/0002_superseded.sql`) or review
-verdicts on `session_log`, so they cannot be served from here. When the mirror
-adds them, the route gains the keys additively rather than changing shape.
+The `feature_process_log` response has no `notes` key: the toolkit's Postgres
+mirror does not carry `feature_notes` (per `db/migrations/0002_superseded.sql`),
+so it cannot be served from here. The lean-mode fields the mirror does carry are
+served additively: `features.mode`, `features.plan_approval`,
+`features.plan_approved_by` and `features.plan_approved_at` (per
+`db/migrations/0005_lean_mode.sql`) become `mode`, `planApproval`,
+`planApprovedBy` and `planApprovedAt` on the feature header of the log and on
+every `features[]` row of `/state`; `session_log.review_status`,
+`session_log.reviewed_by` and `session_log.reviewed_at` become `reviewStatus`,
+`reviewedBy` and `reviewedAt` on every session of the log. Every one of those
+keys is always present (`null` when the column is null, `planApproval` is the
+not-null boolean), timestamps are RFC 3339, and `mode` / `reviewStatus` are
+passed through as text and never validated or mapped.
 
 ### Data source: the toolkit's Postgres mirror (feature 4: `multi_project_mirror_api`)
 
 The reader targets the shared Postgres mirror every harness project syncs into; its authoritative
 DDL is the toolkit's `db/schema.postgres.sql` plus `db/migrations/0001_sdd.sql`,
-`0002_superseded.sql`, `0003_paused_sessions.sql` and `0004_agent_runs.sql`. This backend never changes that schema. The
+`0002_superseded.sql`, `0003_paused_sessions.sql`, `0004_agent_runs.sql` and
+`0005_lean_mode.sql`. This backend never changes that schema. The
 project is chosen per request by slug (there is no configured `PROJECT_SLUG`). Reader rules:
 
 - `features.status` is the `feature_status` enum and is read as text (`status::text`); ids are
@@ -228,9 +237,15 @@ project is chosen per request by slug (there is no configured `PROJECT_SLUG`). R
 - Counts on `/api/harness/projects` are over non-deleted features (`total` includes every status).
 
 `migrations/0001_harness_schema.sql` is a test-only reproduction of the mirror tables and enum the
-reader uses, and `migrations/0002_agent_runs.sql` reproduces the toolkit's `0004_agent_runs.sql`
-verbatim (table, indexes, `active_agent_runs` view); both are applied by the tests' `TestDb` helper and never
-run against the mirror.
+reader uses, `migrations/0002_agent_runs.sql` reproduces the toolkit's `0004_agent_runs.sql`
+verbatim (table, indexes, `active_agent_runs` view), and `migrations/0003_lean_mode.sql` reproduces
+the toolkit's `0005_lean_mode.sql` verbatim (the four `features` columns, the three `session_log`
+columns, the `active_features` and `active_sessions` views); all three are applied by the tests'
+`TestDb` helper and never run against the mirror.
+
+The `/state` and feature-log routes read the columns `0005_lean_mode.sql` added to the mirror, so a
+mirror without that migration answers `500 {"error":"internal error"}` on both of them — the columns
+the reader selects do not exist there. Every other route is unaffected.
 
 The agent-usage route reads `agent_runs` directly over `DATABASE_URL`, like every other route, so
 serving data depends on the toolkit's `db/migrations/0004_agent_runs.sql` (the table) and
