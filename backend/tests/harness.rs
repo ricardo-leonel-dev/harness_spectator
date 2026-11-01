@@ -376,6 +376,56 @@ async fn set_session_review(
     .unwrap();
 }
 
+/// Stamps an explicit `closed_at`. The session seeder writes `now()`, which
+/// ties inside one test run; closure-path tests need to order two closing
+/// sessions of the same feature on purpose.
+async fn set_session_closed_at(
+    pool: &PgPool,
+    session_id: i64,
+    closed_at: chrono::DateTime<chrono::Utc>,
+) {
+    sqlx::query("UPDATE session_log SET closed_at = $1 WHERE id = $2")
+        .bind(closed_at)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A closed session of `feature_id` carrying `review_status` — the seed every
+/// closure-path test starts from.
+async fn seed_closure_session(
+    pool: &PgPool,
+    project_id: Uuid,
+    local_id: i64,
+    feature_id: i64,
+    review_status: Option<&str>,
+    deleted: bool,
+) -> i64 {
+    let session_id = seed_log_session(
+        pool,
+        project_id,
+        LogSessionSeed {
+            local_id,
+            feature_id: Some(feature_id),
+            agent: "closure-agent",
+            started_minutes_ago: 30,
+            started_at_override: None,
+            plan: None,
+            next_step: None,
+            changes: None,
+            verification: None,
+            closure: None,
+            closed: true,
+            paused: false,
+            deleted,
+        },
+    )
+    .await;
+    set_session_review(pool, session_id, review_status, None, None).await;
+    session_id
+}
+
 async fn fetch_entry_created_at(pool: &PgPool, entry_id: i64) -> String {
     sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
         "SELECT created_at FROM session_log_entries WHERE id = $1",
@@ -1761,6 +1811,12 @@ async fn dashboard_with_empty_mirror_returns_zeroes() {
         body,
         json!({
             "agentUsage": empty_agent_usage(),
+            "closedBy": {
+                "approved": 0,
+                "quick": 0,
+                "lean": 0,
+                "none": 0
+            },
             "overall": {
                 "done": 0,
                 "total": 0,
@@ -1810,6 +1866,12 @@ async fn dashboard_aggregates_counts_across_projects() {
         body,
         json!({
             "agentUsage": empty_agent_usage(),
+            "closedBy": {
+                "approved": 0,
+                "quick": 0,
+                "lean": 0,
+                "none": 3
+            },
             "overall": {
                 "done": 3,
                 "total": 10,
@@ -1840,6 +1902,164 @@ async fn dashboard_aggregates_counts_across_projects() {
             "state for {slug} must resolve"
         );
     }
+}
+
+#[tokio::test]
+async fn dashboard_closed_by_counts_each_closure_path() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let project = seed_project(&pool, "closure", None, false).await;
+
+    let approved = seed_feature(&pool, project, 1, "approved", "done", false, false).await;
+    let quick = seed_feature(&pool, project, 2, "quick", "done", false, false).await;
+    let lean = seed_feature(&pool, project, 3, "lean", "done", false, false).await;
+    let unreviewed = seed_feature(&pool, project, 4, "unreviewed", "done", false, false).await;
+    let changes = seed_feature(&pool, project, 5, "changes", "done", false, false).await;
+
+    seed_closure_session(&pool, project, 1, approved, Some("approved"), false).await;
+    seed_closure_session(&pool, project, 2, quick, Some("quick"), false).await;
+    seed_closure_session(&pool, project, 3, lean, Some("lean"), false).await;
+    seed_closure_session(&pool, project, 4, unreviewed, None, false).await;
+    seed_closure_session(&pool, project, 5, changes, Some("changes_requested"), false).await;
+    // The sixth done feature has no session at all.
+    seed_feature(&pool, project, 6, "no-session", "done", false, false).await;
+
+    let (status, body) = get(pool.clone(), DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["closedBy"],
+        json!({ "approved": 1, "quick": 1, "lean": 1, "none": 3 })
+    );
+
+    let closed_total: i64 = body["closedBy"]
+        .as_object()
+        .expect("closedBy object")
+        .values()
+        .map(|v| v.as_i64().expect("count"))
+        .sum();
+    assert_eq!(body["overall"]["done"].as_i64().expect("done"), 6);
+    assert_eq!(
+        closed_total,
+        body["overall"]["done"].as_i64().expect("done")
+    );
+}
+
+#[tokio::test]
+async fn dashboard_closed_by_uses_the_latest_closing_session() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let project = seed_project(&pool, "closure", None, false).await;
+
+    let feature = seed_feature(&pool, project, 1, "two-closures", "done", false, false).await;
+    let older = seed_closure_session(&pool, project, 1, feature, Some("approved"), false).await;
+    let newer = seed_closure_session(&pool, project, 2, feature, Some("lean"), false).await;
+    let older_at = chrono::DateTime::parse_from_rfc3339("2026-03-01T10:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    set_session_closed_at(&pool, older, older_at).await;
+    set_session_closed_at(&pool, newer, older_at + chrono::TimeDelta::hours(1)).await;
+
+    // An open session is not a closing session, not even the newest one.
+    seed_log_session(
+        &pool,
+        project,
+        LogSessionSeed {
+            local_id: 3,
+            feature_id: Some(feature),
+            agent: "closure-agent",
+            started_minutes_ago: 1,
+            started_at_override: None,
+            plan: None,
+            next_step: None,
+            changes: None,
+            verification: None,
+            closure: None,
+            closed: false,
+            paused: false,
+            deleted: false,
+        },
+    )
+    .await;
+
+    // Two closing sessions tied on `closed_at`: the highest id wins.
+    let tied = seed_feature(&pool, project, 2, "tied-closures", "done", false, false).await;
+    let tie_older = seed_closure_session(&pool, project, 4, tied, Some("approved"), false).await;
+    let tie_newer = seed_closure_session(&pool, project, 5, tied, Some("lean"), false).await;
+    let tied_at = chrono::DateTime::parse_from_rfc3339("2026-03-02T10:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    set_session_closed_at(&pool, tie_older, tied_at).await;
+    set_session_closed_at(&pool, tie_newer, tied_at).await;
+
+    // A done feature with no session at all.
+    seed_feature(&pool, project, 3, "no-session", "done", false, false).await;
+
+    let (status, body) = get(pool.clone(), DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["closedBy"],
+        json!({ "approved": 0, "quick": 0, "lean": 2, "none": 1 })
+    );
+    assert_eq!(body["overall"]["done"].as_i64().expect("done"), 3);
+}
+
+#[tokio::test]
+async fn dashboard_closed_by_ignores_deleted_rows_and_open_features() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let live = seed_project(&pool, "live", None, false).await;
+    let ghost = seed_project(&pool, "ghost", None, true).await;
+
+    // Counted: a done feature of a live project, closed as approved.
+    let counted = seed_feature(&pool, live, 1, "counted", "done", false, false).await;
+    seed_closure_session(&pool, live, 1, counted, Some("approved"), false).await;
+
+    // Not counted: a deleted feature.
+    let deleted_feature =
+        seed_feature(&pool, live, 2, "deleted-feature", "done", false, true).await;
+    seed_closure_session(&pool, live, 2, deleted_feature, Some("quick"), false).await;
+
+    // Not counted: a feature that is not done.
+    let in_progress =
+        seed_feature(&pool, live, 3, "in-progress", "in_progress", false, false).await;
+    seed_closure_session(&pool, live, 3, in_progress, Some("approved"), false).await;
+
+    // Not counted: a superseded feature.
+    let superseded = seed_feature(&pool, live, 4, "superseded", "superseded", false, false).await;
+    seed_closure_session(&pool, live, 4, superseded, Some("approved"), false).await;
+
+    // Not counted: a feature of a deleted project.
+    let ghost_feature = seed_feature(&pool, ghost, 1, "ghost-feature", "done", false, false).await;
+    seed_closure_session(&pool, ghost, 1, ghost_feature, Some("approved"), false).await;
+
+    // Counted as `none`: the only closing session of the feature is deleted.
+    let deleted_session =
+        seed_feature(&pool, live, 5, "deleted-session", "done", false, false).await;
+    seed_closure_session(&pool, live, 5, deleted_session, Some("approved"), true).await;
+
+    // Counted as `approved`: the newer closing session is deleted, so the
+    // approved one is the closing session.
+    let stale = seed_feature(&pool, live, 6, "stale-newer", "done", false, false).await;
+    let approved = seed_closure_session(&pool, live, 6, stale, Some("approved"), false).await;
+    let deleted_newer = seed_closure_session(&pool, live, 7, stale, Some("lean"), true).await;
+    let approved_at = chrono::DateTime::parse_from_rfc3339("2026-04-01T10:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    set_session_closed_at(&pool, approved, approved_at).await;
+    set_session_closed_at(
+        &pool,
+        deleted_newer,
+        approved_at + chrono::TimeDelta::hours(1),
+    )
+    .await;
+
+    let (status, body) = get(pool.clone(), DASHBOARD_PATH, Some(valid_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["closedBy"],
+        json!({ "approved": 2, "quick": 0, "lean": 0, "none": 1 })
+    );
+    assert_eq!(body["overall"]["done"].as_i64().expect("done"), 3);
 }
 
 #[tokio::test]
@@ -2224,7 +2444,13 @@ async fn dashboard_agent_usage_aggregates_runs_across_projects() {
                 { "slug": "alpha", "done": 1, "total": 1, "percentage": 100.0 },
                 { "slug": "gamma", "done": 0, "total": 1, "percentage": 0.0 }
             ],
-            "agentUsage": agent_usage
+            "agentUsage": agent_usage,
+            "closedBy": {
+                "approved": 0,
+                "quick": 0,
+                "lean": 0,
+                "none": 1
+            }
         })
     );
 
@@ -2397,7 +2623,13 @@ async fn dashboard_agent_usage_is_empty_when_only_deleted_runs_exist() {
             "topProjects": [
                 { "slug": "live", "done": 1, "total": 1, "percentage": 100.0 }
             ],
-            "agentUsage": empty_agent_usage()
+            "agentUsage": empty_agent_usage(),
+            "closedBy": {
+                "approved": 0,
+                "quick": 0,
+                "lean": 0,
+                "none": 1
+            }
         })
     );
 }
