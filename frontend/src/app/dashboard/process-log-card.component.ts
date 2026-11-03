@@ -26,6 +26,13 @@ const STATE_NODE: Record<SessionState, string> = {
   closed: 'bg-line-strong',
 };
 
+const REVIEW_LABEL: Record<string, string> = {
+  approved: 'reviewer approved',
+  quick: 'quick close',
+  lean: 'lean gate',
+  changes_requested: 'changes requested',
+};
+
 @Component({
   selector: 'app-process-log-card',
   imports: [LucideAngularModule, LifecycleTrackComponent, AgentUsageSectionComponent],
@@ -92,6 +99,29 @@ const STATE_NODE: Record<SessionState, string> = {
           <p class="m-0 break-words font-sans text-xs text-dim" data-log-feature-title>
             {{ feature.title }}
           </p>
+          @if (hasMode(feature.mode)) {
+            <p
+              class="m-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-dim"
+              data-log-plan
+            >
+              <span class="font-mono text-soft">lean {{ feature.mode }}</span>
+              @if (feature.planApproval === true) {
+                <span
+                  >plan approved by
+                  <span class="font-mono text-soft">{{
+                    approver(feature.planApprovedBy)
+                  }}</span></span
+                >
+                @if (hasText(feature.planApprovedAt)) {
+                  <time class="font-mono text-soft" [attr.datetime]="feature.planApprovedAt">{{
+                    feature.planApprovedAt
+                  }}</time>
+                }
+              } @else {
+                <span>plan not approved</span>
+              }
+            </p>
+          }
           <div class="flex justify-end">
             <app-lifecycle-track [status]="feature.status" [pulse]="false" />
           </div>
@@ -165,6 +195,30 @@ const STATE_NODE: Record<SessionState, string> = {
                             class="break-all font-mono text-2xs text-dim"
                             [attr.datetime]="s.closedAt"
                             >{{ s.closedAt }}</time
+                          >
+                        </dd>
+                      }
+                      @if (present(s.reviewStatus)) {
+                        <dt class="font-mono text-micro text-faint">review</dt>
+                        <dd class="m-0 min-w-0 font-sans text-xs text-soft" data-field="review">
+                          {{ reviewLabel(s.reviewStatus) }}
+                        </dd>
+                      }
+                      @if (present(s.reviewedBy)) {
+                        <dt class="font-mono text-micro text-faint">by</dt>
+                        <dd class="m-0 min-w-0" data-field="reviewed-by">
+                          <span class="break-all font-mono text-2xs text-dim">{{
+                            s.reviewedBy
+                          }}</span>
+                        </dd>
+                      }
+                      @if (present(s.reviewedAt)) {
+                        <dt class="font-mono text-micro text-faint">at</dt>
+                        <dd class="m-0 min-w-0" data-field="reviewed-at">
+                          <time
+                            class="break-all font-mono text-2xs text-dim"
+                            [attr.datetime]="s.reviewedAt"
+                            >{{ s.reviewedAt }}</time
                           >
                         </dd>
                       }
@@ -254,10 +308,30 @@ export class ProcessLogCardComponent {
     return String(featureNumber).padStart(2, '0');
   }
 
-  present(value: string | string[] | null): boolean {
-    if (value === null) return false;
+  present(value: string | null | undefined): value is string;
+  present(value: string[] | null | undefined): value is string[];
+  present(value: string | string[] | null | undefined): boolean {
+    if (value === null || value === undefined) return false;
     if (Array.isArray(value)) return this.items(value).length > 0;
     return value.trim() !== '';
+  }
+
+  hasText(value: string | null | undefined): boolean {
+    return typeof value === 'string' && value.trim() !== '';
+  }
+
+  hasMode(mode: string | null | undefined): boolean {
+    return this.hasText(mode);
+  }
+
+  approver(by: string | null | undefined): string {
+    return this.hasText(by) ? (by as string) : 'unknown';
+  }
+
+  reviewLabel(status: string): string {
+    // `reviewStatus` arrives as unvalidated text, so look the map up without
+    // falling through to Object.prototype members ("toString", "constructor").
+    return Object.hasOwn(REVIEW_LABEL, status) ? REVIEW_LABEL[status] : status;
   }
 
   items(list: string[] | null): string[] {

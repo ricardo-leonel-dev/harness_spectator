@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
-import { FeatureLogResponse, ProcessLogSession } from '../core/harness-api.service';
+import { FeatureHeader, FeatureLogResponse, ProcessLogSession } from '../core/harness-api.service';
 import { AgentUsageSectionComponent, AgentUsageState } from './agent-usage-section.component';
 import { ProcessLogCardComponent, ProcessLogState } from './process-log-card.component';
 
@@ -33,6 +33,22 @@ function log(sessions: ProcessLogSession[], status = 'in_progress'): FeatureLogR
       acceptance: ['not rendered either'],
     },
     sessions,
+  };
+}
+
+function featureLog(feature: Partial<FeatureHeader>): FeatureLogResponse {
+  return {
+    feature: {
+      featureNumber: 7,
+      name: 'feature_process_log_panel',
+      title: "Show a feature's process log under Blocked",
+      status: 'in_progress',
+      sdd: true,
+      description: 'not rendered',
+      acceptance: ['not rendered either'],
+      ...feature,
+    },
+    sessions: [],
   };
 }
 
@@ -340,5 +356,122 @@ describe('ProcessLogCardComponent', () => {
     expect(order).toEqual(['header', 'usage', 'sessions']);
     expect(header.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(usage.compareDocumentPosition(sessions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows the mode and the plan approval under the feature title', () => {
+    const host = render({
+      kind: 'ok',
+      log: featureLog({
+        mode: 'risk',
+        planApproval: true,
+        planApprovedBy: 'ricardo',
+        planApprovedAt: '2026-10-14T10:00:00Z',
+      }),
+    });
+    const plan = host.querySelector('[data-log-plan]') as HTMLElement;
+    expect(plan).toBeTruthy();
+    expect(plan.textContent).toContain('lean risk');
+    expect(plan.textContent).toContain('plan approved by ricardo');
+    const time = plan.querySelector('time') as HTMLTimeElement;
+    expect(time.getAttribute('datetime')).toBe('2026-10-14T10:00:00Z');
+    expect(time.textContent?.trim()).toBe('2026-10-14T10:00:00Z');
+  });
+
+  it('says the plan was not approved when the mode carries no approval', () => {
+    const host = render({ kind: 'ok', log: featureLog({ mode: 'normal', planApproval: false }) });
+    const plan = host.querySelector('[data-log-plan]') as HTMLElement;
+    expect(plan.textContent).toContain('lean normal');
+    expect(plan.textContent).toContain('plan not approved');
+    expect(plan.querySelector('time')).toBeNull();
+  });
+
+  it('names an unknown approver when the approval carries no reviewer', () => {
+    const host = render({
+      kind: 'ok',
+      log: featureLog({ mode: 'risk', planApproval: true, planApprovedBy: null }),
+    });
+    const plan = host.querySelector('[data-log-plan]') as HTMLElement;
+    expect(plan.textContent).toContain('plan approved by unknown');
+    expect(plan.querySelector('time')).toBeNull();
+  });
+
+  it('shows no plan line for a feature without a mode', () => {
+    const host = render({
+      kind: 'ok',
+      log: featureLog({ mode: null, planApproval: true, planApprovedBy: 'ricardo' }),
+    });
+    expect(host.querySelector('[data-log-plan]')).toBeNull();
+  });
+
+  it('shows the review, the reviewer and the review time after the closed field', () => {
+    const host = render({
+      kind: 'ok',
+      log: log([
+        session({
+          localId: 9,
+          closedAt: '2026-10-14T10:00:00Z',
+          reviewStatus: 'approved',
+          reviewedBy: 'ricardo',
+          reviewedAt: '2026-10-14T11:00:00Z',
+        }),
+      ]),
+    });
+    const [item] = sessions(host);
+    expect(fieldKeys(item)).toEqual(['started', 'closed', 'review', 'by', 'at']);
+    const field = (name: string): HTMLElement =>
+      item.querySelector(`[data-field="${name}"]`) as HTMLElement;
+    expect(field('review').textContent?.trim()).toBe('reviewer approved');
+    expect(field('reviewed-by').textContent?.trim()).toBe('ricardo');
+    expect(field('reviewed-at').querySelector('time')?.getAttribute('datetime')).toBe(
+      '2026-10-14T11:00:00Z',
+    );
+  });
+
+  it('maps the known review statuses and shows any other value raw', () => {
+    const host = render({
+      kind: 'ok',
+      log: log([
+        session({ localId: 1, reviewStatus: 'approved' }),
+        session({ localId: 2, reviewStatus: 'quick' }),
+        session({ localId: 3, reviewStatus: 'lean' }),
+        session({ localId: 4, reviewStatus: 'changes_requested' }),
+        session({ localId: 5, reviewStatus: 'escalated' }),
+      ]),
+    });
+    expect(
+      sessions(host).map((i) => i.querySelector('[data-field="review"]')?.textContent?.trim()),
+    ).toEqual(['reviewer approved', 'quick close', 'lean gate', 'changes requested', 'escalated']);
+  });
+
+  it('shows a review status raw even when it names an Object.prototype member', () => {
+    const host = render({
+      kind: 'ok',
+      log: log([
+        session({ localId: 1, reviewStatus: 'toString' }),
+        session({ localId: 2, reviewStatus: 'constructor' }),
+        session({ localId: 3, reviewStatus: '__proto__' }),
+      ]),
+    });
+    expect(
+      sessions(host).map((i) => i.querySelector('[data-field="review"]')?.textContent?.trim()),
+    ).toEqual(['toString', 'constructor', '__proto__']);
+  });
+
+  it('omits the review fields that carry no value', () => {
+    const host = render({
+      kind: 'ok',
+      log: log([
+        session({ localId: 1, reviewStatus: null, reviewedBy: null, reviewedAt: null }),
+        session({ localId: 2 }),
+        session({ localId: 3, reviewStatus: '   ', reviewedBy: '', reviewedAt: '  ' }),
+      ]),
+    });
+    const items = sessions(host);
+    for (const item of items) {
+      expect(fieldKeys(item)).toEqual(['started']);
+      expect(item.querySelector('[data-field="review"]')).toBeNull();
+      expect(item.querySelector('[data-field="reviewed-by"]')).toBeNull();
+      expect(item.querySelector('[data-field="reviewed-at"]')).toBeNull();
+    }
   });
 });

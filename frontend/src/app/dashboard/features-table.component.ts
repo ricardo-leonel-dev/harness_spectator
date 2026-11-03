@@ -1,4 +1,5 @@
 import { Component, EventEmitter, Input, Output, ChangeDetectionStrategy } from '@angular/core';
+import { LucideAngularModule, Check } from 'lucide-angular';
 
 import { LifecycleTrackComponent } from './lifecycle-track.component';
 
@@ -8,11 +9,16 @@ export interface FeatureRowVm {
   title: string;
   status: string;
   sdd: boolean;
+  mode?: string | null;
+  planApproval?: boolean;
+  planApprovedBy?: string | null;
+  planApprovedAt?: string | null;
 }
 
 @Component({
   selector: 'app-features-table',
-  imports: [LifecycleTrackComponent],
+  imports: [LucideAngularModule, LifecycleTrackComponent],
+  providers: [LucideAngularModule.pick({ Check }).providers ?? []],
   template: `
     <div
       class="overflow-hidden rounded-md border border-line bg-panel"
@@ -41,6 +47,29 @@ export interface FeatureRowVm {
               data-feature-name
               >{{ f.name }}</span
             >
+            @if (hasMode(f.mode) || f.planApproval === true) {
+              <span class="flex shrink-0 items-center gap-1.5">
+                @if (hasMode(f.mode)) {
+                  <span
+                    class="shrink-0 rounded-sm border border-line-strong px-1.5 py-px font-mono text-micro tracking-[0.04em] text-soft"
+                    data-feature-mode
+                    ><span class="text-muted">lean </span>{{ f.mode }}</span
+                  >
+                }
+                @if (f.planApproval === true) {
+                  <lucide-icon
+                    name="check"
+                    class="h-3 w-3 shrink-0 text-signal"
+                    data-feature-plan
+                    aria-hidden="true"
+                    [attr.title]="approvalLabel(f.planApprovedBy, f.planApprovedAt)"
+                  />
+                  <span class="sr-only">{{
+                    approvalLabel(f.planApprovedBy, f.planApprovedAt)
+                  }}</span>
+                }
+              </span>
+            }
             <span
               class="order-last min-w-0 basis-full truncate pl-[2.125rem] font-sans text-xs text-dim sm:order-none sm:flex-1 sm:basis-auto sm:pl-0"
               [title]="f.title"
@@ -72,5 +101,16 @@ export class FeaturesTableComponent {
 
   idLabel(featureNumber: number): string {
     return String(featureNumber).padStart(2, '0');
+  }
+
+  hasMode(mode: string | null | undefined): boolean {
+    return typeof mode === 'string' && mode.trim() !== '';
+  }
+
+  approvalLabel(by: string | null | undefined, at: string | null | undefined): string {
+    const parts: string[] = [];
+    if (typeof by === 'string' && by.trim() !== '') parts.push(`by ${by}`);
+    if (typeof at === 'string' && at.trim() !== '') parts.push(`at ${at}`);
+    return parts.length > 0 ? `Plan approved ${parts.join(' ')}` : 'Plan approved';
   }
 }
