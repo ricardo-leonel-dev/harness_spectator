@@ -21,6 +21,7 @@ import {
 
 import { DashboardResponse, HarnessApiService, StatusCounts } from '../core/harness-api.service';
 import { CHART_COLORS, formatPercent } from './progress-format';
+import { ClosurePathsComponent } from './closure-paths.component';
 import { DashboardAgentUsageComponent } from './dashboard-agent-usage.component';
 
 type OverviewState =
@@ -66,7 +67,14 @@ const BAR_SCHEME = {
 
 @Component({
   selector: 'app-progress-overview',
-  imports: [GaugeModule, PieChartModule, BarChartModule, RouterLink, DashboardAgentUsageComponent],
+  imports: [
+    GaugeModule,
+    PieChartModule,
+    BarChartModule,
+    RouterLink,
+    ClosurePathsComponent,
+    DashboardAgentUsageComponent,
+  ],
   template: `
     <div class="flex min-w-0 flex-col gap-4" data-overview>
       <header class="flex flex-col gap-1">
@@ -199,6 +207,10 @@ const BAR_SCHEME = {
                     </div>
                   </div>
                 </section>
+
+                @if (current.data.closedBy) {
+                  <app-closure-paths [closedBy]="current.data.closedBy" />
+                }
 
                 <section class="rounded-md border border-line bg-panel p-3.5" data-overview-top>
                   <div class="mb-2.5 flex items-baseline justify-between gap-3">

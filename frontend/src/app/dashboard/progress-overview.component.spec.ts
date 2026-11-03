@@ -520,4 +520,41 @@ describe('ProgressOverviewComponent', () => {
     f.detectChanges();
     expect((f.nativeElement as HTMLElement).querySelector('[data-usage-overview]')).toBeTruthy();
   }));
+
+  it('renders the closure paths between the status strip and the top projects', () => {
+    const f = fixture({ closedBy: { approved: 12, quick: 8, lean: 6, none: 5 } });
+    const section = f.host.querySelector('[data-overview-closed-by]') as HTMLElement;
+    expect(section).toBeTruthy();
+    expect(section.querySelector('h2')?.textContent?.trim()).toBe('Closed by');
+    expect(
+      Array.from(f.host.querySelectorAll('[data-closed-by-row]')).map((r) =>
+        r.getAttribute('data-path'),
+      ),
+    ).toEqual(['approved', 'quick', 'lean', 'none']);
+
+    const strip = f.host.querySelector('[data-overview-strip]') as HTMLElement;
+    const top = f.host.querySelector('[data-overview-top]') as HTMLElement;
+    expect(strip.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(section.compareDocumentPosition(top) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('omits the closure paths when the dashboard carries no closedBy', () => {
+    const f = fixture();
+    expect(f.host.querySelector('[data-overview-closed-by]')).toBeNull();
+    expect(f.host.querySelector('app-closure-paths')).toBeNull();
+  });
+
+  it('omits the closure paths while loading and on error', fakeAsync(() => {
+    const f = TestBed.createComponent(ProgressOverviewComponent);
+    f.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    expect((f.nativeElement as HTMLElement).querySelector('[data-overview-closed-by]')).toBeNull();
+
+    http
+      .expectOne(DASHBOARD_URL)
+      .flush({ error: 'boom' }, { status: 500, statusText: 'Server Error' });
+    tick();
+    f.detectChanges();
+    expect((f.nativeElement as HTMLElement).querySelector('[data-overview-closed-by]')).toBeNull();
+  }));
 });

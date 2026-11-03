@@ -18,6 +18,10 @@ export interface HarnessStateResponse {
     title: string;
     status: string;
     sdd: boolean;
+    mode?: string | null;
+    planApproval?: boolean;
+    planApprovedBy?: string | null;
+    planApprovedAt?: string | null;
   }>;
   openSession: {
     agent: string;
@@ -36,6 +40,10 @@ export interface FeatureHeader {
   sdd: boolean;
   description: string | null;
   acceptance: string[];
+  mode?: string | null;
+  planApproval?: boolean;
+  planApprovedBy?: string | null;
+  planApprovedAt?: string | null;
 }
 
 export interface ProcessLogEntry {
@@ -55,6 +63,9 @@ export interface ProcessLogSession {
   verification: string | null;
   closure: string | null;
   entries: ProcessLogEntry[];
+  reviewStatus?: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
 }
 
 export interface FeatureLogResponse {
@@ -80,10 +91,18 @@ export interface StatusCounts {
   done: number;
 }
 
+export interface ClosedByCounts {
+  approved: number;
+  quick: number;
+  lean: number;
+  none: number;
+}
+
 export interface DashboardResponse {
   overall: { done: number; total: number; percentage: number; byStatus: StatusCounts };
   topProjects: Array<{ slug: string; done: number; total: number; percentage: number }>;
   agentUsage?: DashboardAgentUsage;
+  closedBy?: ClosedByCounts;
 }
 
 export interface UsageBucket {
