@@ -232,12 +232,23 @@ keys is always present (`null` when the column is null, `planApproval` is the
 not-null boolean), timestamps are RFC 3339, and `mode` / `reviewStatus` are
 passed through as text and never validated or mapped.
 
+The scope fields of the toolkit's `db/migrations/0006_scope_surfaces.sql` are
+served the same way: `features.out_of_scope` (jsonb array of strings) becomes
+`outOfScope` on the feature header of the log and on every `features[]` row of
+`/state`; `session_log.surfaces` (jsonb array of path globs) and
+`session_log.surfaces_required` become `surfaces` and `surfacesRequired` on every
+session of the log. All three keys are always present: `outOfScope` and
+`surfaces` are string arrays in stored order (`[]` when the feature has no lines
+or the session has not declared surfaces — `surfaces` is `NULL` in the mirror
+until then), and `surfacesRequired` is the not-null boolean, `false` on rows
+synced before the migration (an older toolkit) and `true` by default after it.
+
 ### Data source: the toolkit's Postgres mirror (feature 4: `multi_project_mirror_api`)
 
 The reader targets the shared Postgres mirror every harness project syncs into; its authoritative
 DDL is the toolkit's `db/schema.postgres.sql` plus `db/migrations/0001_sdd.sql`,
-`0002_superseded.sql`, `0003_paused_sessions.sql`, `0004_agent_runs.sql` and
-`0005_lean_mode.sql`. This backend never changes that schema. The
+`0002_superseded.sql`, `0003_paused_sessions.sql`, `0004_agent_runs.sql`,
+`0005_lean_mode.sql` and `0006_scope_surfaces.sql`. This backend never changes that schema. The
 project is chosen per request by slug (there is no configured `PROJECT_SLUG`). Reader rules:
 
 - `features.status` is the `feature_status` enum and is read as text (`status::text`); ids are
@@ -251,15 +262,19 @@ project is chosen per request by slug (there is no configured `PROJECT_SLUG`). R
 
 `migrations/0001_harness_schema.sql` is a test-only reproduction of the mirror tables and enum the
 reader uses, `migrations/0002_agent_runs.sql` reproduces the toolkit's `0004_agent_runs.sql`
-verbatim (table, indexes, `active_agent_runs` view), and `migrations/0003_lean_mode.sql` reproduces
+verbatim (table, indexes, `active_agent_runs` view), `migrations/0003_lean_mode.sql` reproduces
 the toolkit's `0005_lean_mode.sql` verbatim (the four `features` columns, the three `session_log`
-columns, the `active_features` and `active_sessions` views); all three are applied by the tests'
-`TestDb` helper and never run against the mirror.
+columns, the `active_features` and `active_sessions` views), and `migrations/0004_scope_surfaces.sql`
+reproduces the toolkit's `0006_scope_surfaces.sql` verbatim (`features.out_of_scope`,
+`session_log.surfaces` and `session_log.surfaces_required`, the same two views); all four are
+applied by the tests' `TestDb` helper and never run against the mirror.
 
 The `/state` and feature-log routes read the columns `0005_lean_mode.sql` added to the mirror, and
 the dashboard reads `session_log.review_status` (feature 14, `closedBy`), so a mirror without that
 migration answers `500 {"error":"internal error"}` on those three routes — the columns the reader
-selects do not exist there. Every other route is unaffected.
+selects do not exist there. Likewise `/state` and the feature-log route read the columns
+`0006_scope_surfaces.sql` added, so a mirror without it answers the same `500` on those two routes
+(the dashboard does not read them). Every other route is unaffected.
 
 The agent-usage route reads `agent_runs` directly over `DATABASE_URL`, like every other route, so
 serving data depends on the toolkit's `db/migrations/0004_agent_runs.sql` (the table) and
