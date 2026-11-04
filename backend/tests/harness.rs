@@ -355,6 +355,36 @@ async fn set_feature_lean_fields(
     .unwrap();
 }
 
+/// Writes the scope columns the toolkit's 0006 migration added. Values go in as
+/// JSON text cast to jsonb, so the test needs no sqlx json support.
+async fn set_feature_out_of_scope(pool: &PgPool, feature_id: i64, lines: Value) {
+    sqlx::query("UPDATE features SET out_of_scope = $1::jsonb WHERE id = $2")
+        .bind(lines.to_string())
+        .bind(feature_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn set_session_surfaces(
+    pool: &PgPool,
+    session_id: i64,
+    surfaces: Option<Value>,
+    surfaces_required: bool,
+) {
+    sqlx::query(
+        "UPDATE session_log
+         SET surfaces = $1::jsonb, surfaces_required = $2
+         WHERE id = $3",
+    )
+    .bind(surfaces.map(|v| v.to_string()))
+    .bind(surfaces_required)
+    .bind(session_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn set_session_review(
     pool: &PgPool,
     session_id: i64,
@@ -659,13 +689,17 @@ async fn project_state_returns_mirror_data_for_the_requested_slug() {
         body["features"],
         json!([
             { "featureNumber": 1, "name": "first_feat", "title": "Title of first_feat", "status": "in_progress", "sdd": true,
-              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null },
+              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null,
+              "outOfScope": [] },
             { "featureNumber": 2, "name": "second_feat", "title": "Title of second_feat", "status": "done", "sdd": false,
-              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null },
+              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null,
+              "outOfScope": [] },
             { "featureNumber": 4, "name": "blocked_feat", "title": "Title of blocked_feat", "status": "blocked", "sdd": false,
-              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null },
+              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null,
+              "outOfScope": [] },
             { "featureNumber": 5, "name": "blocked_no_log", "title": "Title of blocked_no_log", "status": "blocked", "sdd": false,
-              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null }
+              "mode": null, "planApproval": false, "planApprovedBy": null, "planApprovedAt": null,
+              "outOfScope": [] }
         ])
     );
     assert_eq!(body["openSession"]["agent"], "implementer");
@@ -1208,6 +1242,114 @@ async fn feature_log_exposes_per_session_review_fields() {
     assert_eq!(third["reviewStatus"], Value::Null);
     assert_eq!(third["reviewedBy"], Value::Null);
     assert_eq!(third["reviewedAt"], Value::Null);
+}
+
+#[tokio::test]
+async fn project_state_exposes_out_of_scope_lines() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let project = seed_project(&pool, "test-project", None, false).await;
+    let scoped = seed_feature(&pool, project, 1, "scoped_feat", "pending", false, false).await;
+    seed_feature(&pool, project, 2, "older_feat", "pending", false, false).await;
+    set_feature_out_of_scope(
+        &pool,
+        scoped,
+        json!(["No new endpoints", "No writes to the mirror"]),
+    )
+    .await;
+
+    let (status, body) = get(pool, &state_path("test-project"), Some(valid_token())).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let features = body["features"].as_array().expect("features array");
+    assert_eq!(features.len(), 2);
+    assert_eq!(
+        features[0]["outOfScope"],
+        json!(["No new endpoints", "No writes to the mirror"])
+    );
+    assert_eq!(features[1]["outOfScope"], json!([]));
+}
+
+#[tokio::test]
+async fn feature_log_exposes_out_of_scope_lines_and_session_surfaces() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let project = seed_project(&pool, "test-project", None, false).await;
+    let feature = seed_feature(
+        &pool,
+        project,
+        1,
+        "scoped_feat",
+        "in_progress",
+        false,
+        false,
+    )
+    .await;
+    seed_feature(&pool, project, 2, "older_feat", "pending", false, false).await;
+    set_feature_out_of_scope(&pool, feature, json!(["No new endpoints"])).await;
+
+    let seed = |local_id: i64, agent: &'static str, started_minutes_ago: i32, closed: bool| {
+        LogSessionSeed {
+            local_id,
+            feature_id: Some(feature),
+            agent,
+            started_minutes_ago,
+            started_at_override: None,
+            plan: None,
+            next_step: None,
+            changes: None,
+            verification: None,
+            closure: None,
+            closed,
+            paused: false,
+            deleted: false,
+        }
+    };
+    // Declared surfaces on a session that had to declare them.
+    let declared = seed_log_session(&pool, project, seed(1, "declared-agent", 30, true)).await;
+    set_session_surfaces(
+        &pool,
+        declared,
+        Some(json!(["src/harness/**", "tests/harness.rs"])),
+        true,
+    )
+    .await;
+    // A session synced by an older toolkit: no surfaces, not required.
+    let older = seed_log_session(&pool, project, seed(2, "older-agent", 20, true)).await;
+    set_session_surfaces(&pool, older, None, false).await;
+    // A required session that has not declared its surfaces yet.
+    seed_log_session(&pool, project, seed(3, "undeclared-agent", 10, false)).await;
+
+    let (status, body) = get(
+        pool.clone(),
+        &log_path("test-project", "scoped_feat"),
+        Some(valid_token()),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["feature"]["outOfScope"], json!(["No new endpoints"]));
+    let sessions = body["sessions"].as_array().expect("sessions array");
+    assert_eq!(sessions.len(), 3);
+    assert_eq!(
+        sessions[0]["surfaces"],
+        json!(["src/harness/**", "tests/harness.rs"])
+    );
+    assert_eq!(sessions[0]["surfacesRequired"], true);
+    assert_eq!(sessions[1]["surfaces"], json!([]));
+    assert_eq!(sessions[1]["surfacesRequired"], false);
+    assert_eq!(sessions[2]["surfaces"], json!([]));
+    assert_eq!(sessions[2]["surfacesRequired"], true);
+
+    let (status, body) = get(
+        pool,
+        &log_path("test-project", "older_feat"),
+        Some(valid_token()),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["feature"]["outOfScope"], json!([]));
 }
 
 #[tokio::test]

@@ -76,6 +76,7 @@ struct FeatureDbRow {
     plan_approval: bool,
     plan_approved_by: Option<String>,
     plan_approved_at: Option<DateTime<Utc>>,
+    out_of_scope: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -93,6 +94,8 @@ pub struct FeatureRow {
     pub plan_approved_by: Option<String>,
     #[serde(rename = "planApprovedAt")]
     pub plan_approved_at: Option<String>,
+    #[serde(rename = "outOfScope")]
+    pub out_of_scope: Vec<String>,
 }
 
 impl From<FeatureDbRow> for FeatureRow {
@@ -107,6 +110,7 @@ impl From<FeatureDbRow> for FeatureRow {
             plan_approval: r.plan_approval,
             plan_approved_by: r.plan_approved_by,
             plan_approved_at: r.plan_approved_at.map(|t| t.to_rfc3339()),
+            out_of_scope: r.out_of_scope,
         }
     }
 }
@@ -198,7 +202,8 @@ pub async fn read_project_state(
 
     let features: Vec<FeatureDbRow> = sqlx::query_as(
         "SELECT feature_number, name, title, status::text AS status, sdd,
-                mode, plan_approval, plan_approved_by, plan_approved_at
+                mode, plan_approval, plan_approved_by, plan_approved_at,
+                ARRAY(SELECT jsonb_array_elements_text(out_of_scope)) AS out_of_scope
          FROM features
          WHERE project_id = $1
            AND deleted_at IS NULL
@@ -284,6 +289,8 @@ pub struct FeatureHeader {
     pub plan_approved_by: Option<String>,
     #[serde(rename = "planApprovedAt")]
     pub plan_approved_at: Option<String>,
+    #[serde(rename = "outOfScope")]
+    pub out_of_scope: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -309,6 +316,9 @@ pub struct ProcessLogSession {
     pub reviewed_by: Option<String>,
     #[serde(rename = "reviewedAt")]
     pub reviewed_at: Option<String>,
+    pub surfaces: Vec<String>,
+    #[serde(rename = "surfacesRequired")]
+    pub surfaces_required: bool,
     pub entries: Vec<ProcessLogEntry>,
 }
 
@@ -333,6 +343,7 @@ struct FeatureHeaderDbRow {
     plan_approval: bool,
     plan_approved_by: Option<String>,
     plan_approved_at: Option<DateTime<Utc>>,
+    out_of_scope: Vec<String>,
 }
 
 impl From<FeatureHeaderDbRow> for FeatureHeader {
@@ -349,6 +360,7 @@ impl From<FeatureHeaderDbRow> for FeatureHeader {
             plan_approval: r.plan_approval,
             plan_approved_by: r.plan_approved_by,
             plan_approved_at: r.plan_approved_at.map(|t| t.to_rfc3339()),
+            out_of_scope: r.out_of_scope,
         }
     }
 }
@@ -369,6 +381,8 @@ struct ProcessLogSessionDbRow {
     review_status: Option<String>,
     reviewed_by: Option<String>,
     reviewed_at: Option<DateTime<Utc>>,
+    surfaces: Vec<String>,
+    surfaces_required: bool,
 }
 
 impl From<ProcessLogSessionDbRow> for ProcessLogSession {
@@ -387,6 +401,8 @@ impl From<ProcessLogSessionDbRow> for ProcessLogSession {
             review_status: r.review_status,
             reviewed_by: r.reviewed_by,
             reviewed_at: r.reviewed_at.map(|t| t.to_rfc3339()),
+            surfaces: r.surfaces,
+            surfaces_required: r.surfaces_required,
             entries: Vec::new(),
         }
     }
@@ -855,7 +871,8 @@ pub async fn read_feature_log(
 
     let feature_row: Option<FeatureHeaderDbRow> = sqlx::query_as(
         "SELECT id, feature_number, name, title, status::text AS status, sdd, description, acceptance,
-                mode, plan_approval, plan_approved_by, plan_approved_at
+                mode, plan_approval, plan_approved_by, plan_approved_at,
+                ARRAY(SELECT jsonb_array_elements_text(out_of_scope)) AS out_of_scope
          FROM features
          WHERE project_id = $1 AND name = $2 AND deleted_at IS NULL",
     )
@@ -870,7 +887,9 @@ pub async fn read_feature_log(
     let session_rows: Vec<ProcessLogSessionDbRow> = sqlx::query_as(
         "SELECT id, local_id, agent, started_at, closed_at, paused_at,
                 plan, next_step, changes, verification, closure,
-                review_status, reviewed_by, reviewed_at
+                review_status, reviewed_by, reviewed_at,
+                ARRAY(SELECT jsonb_array_elements_text(COALESCE(surfaces, '[]'::jsonb))) AS surfaces,
+                surfaces_required
          FROM session_log
          WHERE project_id = $1 AND feature_id = $2 AND deleted_at IS NULL
          ORDER BY started_at ASC, id ASC",
