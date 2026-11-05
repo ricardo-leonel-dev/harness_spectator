@@ -830,9 +830,15 @@ impl From<FeatureByStatusDbRow> for FeatureByStatus {
     }
 }
 
+/// Lists the features of the given statuses, optionally narrowed to one
+/// project. The status list is validated first: an unknown status is a bad
+/// request even when the project slug is unknown too. `project` is a slug
+/// looked up among the non-deleted projects; an unknown slug — including the
+/// slug of a soft-deleted project — is a not found.
 pub async fn read_features_by_status(
     pool: &PgPool,
     status: &str,
+    project: Option<&str>,
 ) -> Result<Vec<FeatureByStatus>, ApiError> {
     let statuses: Vec<String> = status.split(',').map(str::to_owned).collect();
     if statuses
@@ -842,6 +848,20 @@ pub async fn read_features_by_status(
         return Err(ApiError::BadRequest);
     }
 
+    if let Some(slug) = project {
+        let project_id: Option<sqlx::types::Uuid> = sqlx::query_scalar(
+            "SELECT id
+             FROM projects
+             WHERE slug = $1 AND deleted_at IS NULL",
+        )
+        .bind(slug)
+        .fetch_optional(pool)
+        .await?;
+        if project_id.is_none() {
+            return Err(ApiError::NotFound);
+        }
+    }
+
     let rows: Vec<FeatureByStatusDbRow> = sqlx::query_as(
         "SELECT p.slug, f.name, f.title, f.status::text AS status
          FROM features f
@@ -849,9 +869,11 @@ pub async fn read_features_by_status(
          WHERE p.deleted_at IS NULL
            AND f.deleted_at IS NULL
            AND f.status::text = ANY($1)
+           AND ($2::text IS NULL OR p.slug = $2)
          ORDER BY p.slug, f.feature_number, f.id",
     )
     .bind(statuses)
+    .bind(project)
     .fetch_all(pool)
     .await?;
 
