@@ -11,6 +11,7 @@ use crate::harness::router::{
     get_dashboard, get_feature_agent_usage, get_feature_log, get_features_by_status,
     get_project_state, get_projects,
 };
+use crate::health::get_health;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -35,6 +36,7 @@ pub fn build_app(pool: PgPool, config: Config) -> Router {
         ]);
 
     let mut router = Router::new()
+        .route("/api/health", get(get_health))
         .route("/api/auth/mode", get(get_auth_mode))
         .route("/api/harness/projects", get(get_projects))
         .route("/api/harness/projects/{slug}/state", get(get_project_state))
