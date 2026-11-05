@@ -834,7 +834,11 @@ pub async fn read_features_by_status(
     pool: &PgPool,
     status: &str,
 ) -> Result<Vec<FeatureByStatus>, ApiError> {
-    if !LISTABLE_FEATURE_STATUSES.contains(&status) {
+    let statuses: Vec<String> = status.split(',').map(str::to_owned).collect();
+    if statuses
+        .iter()
+        .any(|part| !LISTABLE_FEATURE_STATUSES.contains(&part.as_str()))
+    {
         return Err(ApiError::BadRequest);
     }
 
@@ -844,10 +848,10 @@ pub async fn read_features_by_status(
          JOIN projects p ON p.id = f.project_id
          WHERE p.deleted_at IS NULL
            AND f.deleted_at IS NULL
-           AND f.status::text = $1
+           AND f.status::text = ANY($1)
          ORDER BY p.slug, f.feature_number, f.id",
     )
-    .bind(status)
+    .bind(statuses)
     .fetch_all(pool)
     .await?;
 

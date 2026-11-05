@@ -3708,6 +3708,134 @@ async fn features_by_status_rejects_missing_or_invalid_status() {
     }
 }
 
+/// A comma-separated list of listable statuses returns the union of both
+/// statuses, still ordered by project slug then feature number, so features of
+/// different statuses interleave.
+#[tokio::test]
+async fn features_by_status_accepts_a_comma_separated_list() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let alpha = seed_project(&pool, "alpha", None, false).await;
+    let beta = seed_project(&pool, "beta", None, false).await;
+    let ghost = seed_project(&pool, "ghost", None, true).await;
+    seed_feature(&pool, alpha, 1, "alpha-pending", "pending", false, false).await;
+    seed_feature(
+        &pool,
+        alpha,
+        2,
+        "alpha-running",
+        "in_progress",
+        false,
+        false,
+    )
+    .await;
+    seed_feature(&pool, alpha, 3, "alpha-pending-2", "pending", false, false).await;
+    seed_feature(&pool, alpha, 4, "alpha-done", "done", false, false).await;
+    seed_feature(&pool, alpha, 5, "alpha-gone", "pending", false, true).await;
+    seed_feature(
+        &pool,
+        alpha,
+        6,
+        "alpha-superseded",
+        "superseded",
+        false,
+        false,
+    )
+    .await;
+    seed_feature(&pool, beta, 1, "beta-pending", "pending", false, false).await;
+    seed_feature(&pool, beta, 2, "beta-running", "in_progress", false, false).await;
+    seed_feature(&pool, ghost, 1, "ghost-pending", "pending", false, false).await;
+
+    let expected = json!([
+        listed("alpha", "alpha-pending", "pending"),
+        listed("alpha", "alpha-running", "in_progress"),
+        listed("alpha", "alpha-pending-2", "pending"),
+        listed("beta", "beta-pending", "pending"),
+        listed("beta", "beta-running", "in_progress"),
+    ]);
+
+    let (code, body) = get(
+        pool.clone(),
+        &format!("{FEATURES_PATH}?status=pending,in_progress"),
+        Some(valid_token()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(body, expected);
+
+    let (code, body) = get(
+        pool,
+        &format!("{FEATURES_PATH}?status=in_progress,pending"),
+        Some(valid_token()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(body, expected);
+}
+
+#[tokio::test]
+async fn features_by_status_ignores_duplicate_statuses() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let project = seed_project(&pool, "alpha", None, false).await;
+    seed_feature(&pool, project, 1, "alpha-done", "done", false, false).await;
+    seed_feature(&pool, project, 2, "alpha-done-2", "done", false, false).await;
+
+    let (code, body) = get(
+        pool.clone(),
+        &format!("{FEATURES_PATH}?status=done"),
+        Some(valid_token()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!([
+            listed("alpha", "alpha-done", "done"),
+            listed("alpha", "alpha-done-2", "done"),
+        ])
+    );
+
+    let (code, body) = get(
+        pool,
+        &format!("{FEATURES_PATH}?status=done,done"),
+        Some(valid_token()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!([
+            listed("alpha", "alpha-done", "done"),
+            listed("alpha", "alpha-done-2", "done"),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn features_by_status_rejects_invalid_status_lists() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let project = seed_project(&pool, "alpha", None, false).await;
+    seed_feature(&pool, project, 1, "alpha-pending", "pending", false, false).await;
+
+    for uri in [
+        format!("{FEATURES_PATH}?status=pending,foo"),
+        format!("{FEATURES_PATH}?status=pending,superseded"),
+        format!("{FEATURES_PATH}?status=pending,"),
+        format!("{FEATURES_PATH}?status=,pending"),
+        format!("{FEATURES_PATH}?status=pending,,done"),
+        format!("{FEATURES_PATH}?status=,"),
+        format!("{FEATURES_PATH}?status=pending,%20done"),
+        format!("{FEATURES_PATH}?status=pending,DONE"),
+        format!("{FEATURES_PATH}?status=pending&status=done"),
+    ] {
+        let (code, body) = get(pool.clone(), &uri, Some(valid_token())).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(body, json!({ "error": "bad request" }), "{uri}");
+    }
+}
+
 /// Feature 12 regression: test databases must be unique per invocation, not per
 /// test path, so concurrent `cargo test` processes cannot collide on them, and
 /// each one must be dropped when its owner goes out of scope.
