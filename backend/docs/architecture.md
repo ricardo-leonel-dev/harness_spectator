@@ -214,7 +214,15 @@ frontend (separate project/process)
           statuses the dashboard's `byStatus` counts); a missing, empty or other value
           (including `superseded` and the camelCase `byStatus` keys) answers
           `400 {"error":"bad request"}`. No match answers `200 []`. Every `projectSlug`/`name`
-          pair resolves on the per-feature log route.
+          pair resolves on the per-feature log route. Feature 18
+          (`features_multi_status_filter`) lets `status` be a comma-separated list of those six
+          statuses (`?status=pending,in_progress`): the answer is the union of the listed
+          statuses, still ordered by `projectSlug` then `feature_number`, so features of
+          different statuses interleave and none of them appears twice. Every part must be
+          exactly one of the six — an unknown, non-listable (`superseded`), empty or
+          space-padded part makes the whole request `400 {"error":"bad request"}`, with no
+          partial answer. Repeated parts are allowed (`done,done` answers like `done`); a
+          repeated `status` parameter (`?status=a&status=b`) stays a bad request.
   -> JSON response
 ```
 
