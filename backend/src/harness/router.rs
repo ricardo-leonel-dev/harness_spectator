@@ -58,6 +58,7 @@ pub async fn get_dashboard(
 #[derive(Debug, Deserialize)]
 pub struct FeaturesByStatusQuery {
     status: Option<String>,
+    project: Option<String>,
 }
 
 pub async fn get_features_by_status(
@@ -67,6 +68,6 @@ pub async fn get_features_by_status(
 ) -> Result<Json<Vec<FeatureByStatus>>, ApiError> {
     let Query(query) = query.map_err(|_| ApiError::BadRequest)?;
     let status = query.status.ok_or(ApiError::BadRequest)?;
-    let features = read_features_by_status(&state.pool, &status).await?;
+    let features = read_features_by_status(&state.pool, &status, query.project.as_deref()).await?;
     Ok(Json(features))
 }

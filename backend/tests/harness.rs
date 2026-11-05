@@ -992,7 +992,7 @@ async fn reader_performs_only_select_queries() -> sqlx::Result<()> {
         .expect("read_feature_agent_usage should succeed on a read-only connection");
     assert_eq!(usage.runs.len(), 1);
 
-    let blocked = read_features_by_status(&read_only_pool, "blocked")
+    let blocked = read_features_by_status(&read_only_pool, "blocked", None)
         .await
         .expect("read_features_by_status should succeed on a read-only connection");
     assert_eq!(blocked.len(), 1);
@@ -3833,6 +3833,181 @@ async fn features_by_status_rejects_invalid_status_lists() {
         let (code, body) = get(pool.clone(), &uri, Some(valid_token())).await;
         assert_eq!(code, StatusCode::BAD_REQUEST, "{uri}");
         assert_eq!(body, json!({ "error": "bad request" }), "{uri}");
+    }
+}
+
+/// Feature 19: `?project=<slug>` narrows the listing to one project. The
+/// status list keeps working, the order stays `projectSlug` then
+/// `feature_number`, and a request without `project` still lists every
+/// project.
+#[tokio::test]
+async fn features_by_status_filters_by_project() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let alpha = seed_project(&pool, "alpha", None, false).await;
+    let beta = seed_project(&pool, "beta", None, false).await;
+    let ghost = seed_project(&pool, "ghost", None, true).await;
+    seed_feature(&pool, alpha, 1, "alpha-pending-1", "pending", false, false).await;
+    seed_feature(&pool, alpha, 2, "alpha-pending-2", "pending", false, false).await;
+    seed_feature(&pool, alpha, 3, "alpha-done", "done", false, false).await;
+    seed_feature(
+        &pool,
+        alpha,
+        4,
+        "alpha-running",
+        "in_progress",
+        false,
+        false,
+    )
+    .await;
+    seed_feature(&pool, alpha, 5, "alpha-gone", "pending", false, true).await;
+    seed_feature(&pool, beta, 1, "beta-done", "done", false, false).await;
+    seed_feature(&pool, beta, 2, "beta-pending", "pending", false, false).await;
+    seed_feature(&pool, ghost, 1, "ghost-pending", "pending", false, false).await;
+
+    let (code, body) = get(
+        pool.clone(),
+        &format!("{FEATURES_PATH}?status=pending&project=alpha"),
+        Some(valid_token()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!([
+            listed("alpha", "alpha-pending-1", "pending"),
+            listed("alpha", "alpha-pending-2", "pending"),
+        ])
+    );
+
+    let (code, body) = get(
+        pool.clone(),
+        &format!("{FEATURES_PATH}?status=pending,done&project=beta"),
+        Some(valid_token()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!([
+            listed("beta", "beta-done", "done"),
+            listed("beta", "beta-pending", "pending"),
+        ])
+    );
+
+    // The same requests without `project` still list every project.
+    let (code, body) = get(
+        pool.clone(),
+        &format!("{FEATURES_PATH}?status=pending"),
+        Some(valid_token()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!([
+            listed("alpha", "alpha-pending-1", "pending"),
+            listed("alpha", "alpha-pending-2", "pending"),
+            listed("beta", "beta-pending", "pending"),
+        ])
+    );
+
+    let (code, body) = get(
+        pool,
+        &format!("{FEATURES_PATH}?status=pending,done"),
+        Some(valid_token()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!([
+            listed("alpha", "alpha-pending-1", "pending"),
+            listed("alpha", "alpha-pending-2", "pending"),
+            listed("alpha", "alpha-done", "done"),
+            listed("beta", "beta-done", "done"),
+            listed("beta", "beta-pending", "pending"),
+        ])
+    );
+}
+
+/// An unknown slug is a not found — and so are the slug of a soft-deleted
+/// project, a wrong-case slug and an empty value.
+#[tokio::test]
+async fn features_by_status_rejects_an_unknown_project() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let alpha = seed_project(&pool, "alpha", None, false).await;
+    let ghost = seed_project(&pool, "ghost", None, true).await;
+    seed_feature(&pool, alpha, 1, "alpha-pending", "pending", false, false).await;
+    seed_feature(&pool, ghost, 1, "ghost-pending", "pending", false, false).await;
+
+    for uri in [
+        format!("{FEATURES_PATH}?status=pending&project=unknown"),
+        format!("{FEATURES_PATH}?status=pending&project=ghost"),
+        format!("{FEATURES_PATH}?status=pending&project=Alpha"),
+        format!("{FEATURES_PATH}?status=pending&project="),
+    ] {
+        let (code, body) = get(pool.clone(), &uri, Some(valid_token())).await;
+        assert_eq!(code, StatusCode::NOT_FOUND, "{uri}");
+        assert_eq!(body, json!({ "error": "not found" }), "{uri}");
+    }
+}
+
+/// A known project without a matching feature answers an empty list, not a
+/// not found.
+#[tokio::test]
+async fn features_by_status_returns_empty_list_when_the_project_has_no_match() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let alpha = seed_project(&pool, "alpha", None, false).await;
+    seed_feature(&pool, alpha, 1, "alpha-pending", "pending", false, false).await;
+
+    let (code, body) = get(
+        pool,
+        &format!("{FEATURES_PATH}?status=done&project=alpha"),
+        Some(valid_token()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(body, json!([]));
+}
+
+/// The status is validated before the project: an unknown status is a bad
+/// request even when the project slug is unknown too, and a repeated
+/// `project` parameter is a bad request as well.
+#[tokio::test]
+async fn features_by_status_rejects_a_bad_status_and_a_repeated_project() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let alpha = seed_project(&pool, "alpha", None, false).await;
+    seed_feature(&pool, alpha, 1, "alpha-pending", "pending", false, false).await;
+
+    for uri in [
+        format!("{FEATURES_PATH}?project=alpha"),
+        format!("{FEATURES_PATH}?status=foo&project=alpha"),
+        format!("{FEATURES_PATH}?status=foo&project=unknown"),
+        format!("{FEATURES_PATH}?status=pending&project=alpha&project=beta"),
+    ] {
+        let (code, body) = get(pool.clone(), &uri, Some(valid_token())).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(body, json!({ "error": "bad request" }), "{uri}");
+    }
+}
+
+/// Filtering by project does not relax the authentication of the route.
+#[tokio::test]
+async fn features_by_status_with_a_project_requires_a_valid_token() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let alpha = seed_project(&pool, "alpha", None, false).await;
+    seed_feature(&pool, alpha, 1, "alpha-pending", "pending", false, false).await;
+
+    let uri = format!("{FEATURES_PATH}?status=pending&project=alpha");
+    for (case, token) in unauthorized_cases() {
+        let (status, body) = get(pool.clone(), &uri, token).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{case}");
+        assert_eq!(body, json!({ "error": "unauthorized" }), "{case}");
     }
 }
 

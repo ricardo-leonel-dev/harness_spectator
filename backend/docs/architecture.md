@@ -223,6 +223,16 @@ frontend (separate project/process)
           space-padded part makes the whole request `400 {"error":"bad request"}`, with no
           partial answer. Repeated parts are allowed (`done,done` answers like `done`); a
           repeated `status` parameter (`?status=a&status=b`) stays a bad request.
+          Feature 19 (`features_project_filter`) adds the optional `project=<slug>`
+          filter: the answer is narrowed to the features of that one project, keeping
+          the same order (`projectSlug` then `feature_number`). The slug is looked up
+          among the non-deleted projects; an unknown slug — including the slug of a
+          soft-deleted project, a wrong-case slug and an empty value (`?project=`) —
+          answers `404 {"error":"not found"}`, while a known project without a matching
+          feature answers `200 []`. The status list is validated before the slug, so an
+          invalid or missing `status` answers `400 {"error":"bad request"}` even when the
+          slug is unknown too; a repeated `project` parameter (`?project=a&project=b`) is
+          a bad request as well. Without `project` the answer is unchanged.
   -> JSON response
 ```
 
