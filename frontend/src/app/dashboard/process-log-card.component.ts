@@ -122,6 +122,18 @@ const REVIEW_LABEL: Record<string, string> = {
               }
             </p>
           }
+          @if (present(feature.outOfScope)) {
+            <div class="mt-0.5 min-w-0" data-log-out-of-scope>
+              <p class="m-0 font-mono text-micro text-faint">out of scope</p>
+              <ul
+                class="m-0 mt-0.5 list-disc break-words pl-4 font-sans text-xs text-soft [overflow-wrap:anywhere]"
+              >
+                @for (line of items(feature.outOfScope); track $index) {
+                  <li>{{ line }}</li>
+                }
+              </ul>
+            </div>
+          }
           <div class="flex justify-end">
             <app-lifecycle-track [status]="feature.status" [pulse]="false" />
           </div>
@@ -232,6 +244,21 @@ const REVIEW_LABEL: Record<string, string> = {
                           </ol>
                         </dd>
                       }
+                      @if (present(s.surfaces)) {
+                        <dt class="font-mono text-micro text-faint">surfaces</dt>
+                        <dd class="m-0 min-w-0" data-field="surfaces">
+                          <ul class="m-0 list-none break-all p-0 font-mono text-2xs text-dim">
+                            @for (item of items(s.surfaces); track $index) {
+                              <li>{{ item }}</li>
+                            }
+                          </ul>
+                          <span
+                            class="mt-0.5 block font-mono text-micro text-faint"
+                            data-log-surfaces-required
+                            >{{ s.surfacesRequired === true ? 'required' : 'not required' }}</span
+                          >
+                        </dd>
+                      }
                       @if (present(s.nextStep)) {
                         <dt class="font-mono text-micro text-faint">next</dt>
                         <dd class="m-0 min-w-0" data-field="next">
@@ -334,7 +361,7 @@ export class ProcessLogCardComponent {
     return Object.hasOwn(REVIEW_LABEL, status) ? REVIEW_LABEL[status] : status;
   }
 
-  items(list: string[] | null): string[] {
+  items(list: string[] | null | undefined): string[] {
     return (list ?? []).filter((item) => item.trim() !== '');
   }
 
