@@ -588,11 +588,44 @@ async fn projects_returns_non_deleted_projects_with_counts_ordered_by_slug() {
             {
                 "slug": "alpha",
                 "description": "Alpha project",
-                "counts": { "total": 6, "done": 2, "inProgress": 1, "blocked": 1 }
+                "counts": { "total": 5, "done": 2, "inProgress": 1, "blocked": 1 }
             },
             {
                 "slug": "beta",
                 "description": "",
+                "counts": { "total": 0, "done": 0, "inProgress": 0, "blocked": 0 }
+            }
+        ])
+    );
+}
+
+#[tokio::test]
+async fn projects_counts_exclude_superseded_features() {
+    let db = TestDb::new().await;
+    let pool = db.pool();
+    let only_superseded =
+        seed_project(&pool, "only-superseded", Some("Superseded only"), false).await;
+    let mixed = seed_project(&pool, "mixed", Some("Done and superseded"), false).await;
+
+    seed_feature(&pool, only_superseded, 1, "s1", "superseded", false, false).await;
+    seed_feature(&pool, only_superseded, 2, "s2", "superseded", false, true).await;
+    seed_feature(&pool, mixed, 1, "m1", "done", false, false).await;
+    seed_feature(&pool, mixed, 2, "m2", "superseded", false, false).await;
+
+    let (status, body) = get(pool, PROJECTS_PATH, Some(valid_token())).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!([
+            {
+                "slug": "mixed",
+                "description": "Done and superseded",
+                "counts": { "total": 1, "done": 1, "inProgress": 0, "blocked": 0 }
+            },
+            {
+                "slug": "only-superseded",
+                "description": "Superseded only",
                 "counts": { "total": 0, "done": 0, "inProgress": 0, "blocked": 0 }
             }
         ])

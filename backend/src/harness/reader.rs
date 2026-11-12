@@ -169,7 +169,7 @@ pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectSummary>, ApiErro
     let rows: Vec<ProjectSummaryDbRow> = sqlx::query_as(
         "SELECT p.slug,
                 COALESCE(p.description, '') AS description,
-                COUNT(f.id) AS total,
+                COUNT(f.id) FILTER (WHERE f.status <> 'superseded') AS total,
                 COUNT(f.id) FILTER (WHERE f.status = 'done') AS done,
                 COUNT(f.id) FILTER (WHERE f.status = 'in_progress') AS in_progress,
                 COUNT(f.id) FILTER (WHERE f.status = 'blocked') AS blocked
