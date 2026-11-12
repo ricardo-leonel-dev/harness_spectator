@@ -44,6 +44,7 @@ export interface FeatureHeader {
   planApproval?: boolean;
   planApprovedBy?: string | null;
   planApprovedAt?: string | null;
+  outOfScope?: string[] | null;
 }
 
 export interface ProcessLogEntry {
@@ -66,6 +67,8 @@ export interface ProcessLogSession {
   reviewStatus?: string | null;
   reviewedBy?: string | null;
   reviewedAt?: string | null;
+  surfaces?: string[] | null;
+  surfacesRequired?: boolean;
 }
 
 export interface FeatureLogResponse {

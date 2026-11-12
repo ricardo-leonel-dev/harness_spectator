@@ -474,4 +474,72 @@ describe('ProcessLogCardComponent', () => {
       expect(item.querySelector('[data-field="reviewed-at"]')).toBeNull();
     }
   });
+
+  it('lists the out-of-scope lines in the header, skipping blank lines', () => {
+    const host = render({
+      kind: 'ok',
+      log: featureLog({ outOfScope: ['No new routes or pages', '  ', 'No editing from the UI'] }),
+    });
+    const block = host.querySelector('[data-log-out-of-scope]') as HTMLElement;
+    expect(block).toBeTruthy();
+    expect(block.closest('[data-log-header]')).toBeTruthy();
+    expect(Array.from(block.querySelectorAll('li')).map((li) => li.textContent?.trim())).toEqual([
+      'No new routes or pages',
+      'No editing from the UI',
+    ]);
+  });
+
+  it('shows no out-of-scope block when the feature has no lines', () => {
+    for (const outOfScope of [[], ['', '  '], null, undefined]) {
+      const host = render({ kind: 'ok', log: featureLog({ outOfScope }) });
+      expect(host.querySelector('[data-log-out-of-scope]')).toBeNull();
+      expect(host.textContent).not.toContain('out of scope');
+    }
+  });
+
+  it('lists each session surfaces after the plan and says whether they were required', () => {
+    const host = render({
+      kind: 'ok',
+      log: log([
+        session({
+          localId: 2,
+          plan: ['Write code'],
+          surfaces: ['src/app/**', 'tests/*.ts'],
+          surfacesRequired: true,
+          nextStep: ['Ask for review'],
+        }),
+        session({ localId: 1, surfaces: ['docs/x.md'], surfacesRequired: false }),
+      ]),
+    });
+    const [first, second] = sessions(host);
+    expect(fieldKeys(first)).toEqual(['started', 'plan', 'surfaces', 'next']);
+    const field = (item: HTMLElement): HTMLElement =>
+      item.querySelector('[data-field="surfaces"]') as HTMLElement;
+    expect(
+      Array.from(field(first).querySelectorAll('li')).map((li) => li.textContent?.trim()),
+    ).toEqual(['src/app/**', 'tests/*.ts']);
+    expect(field(first).querySelector('[data-log-surfaces-required]')?.textContent?.trim()).toBe(
+      'required',
+    );
+    expect(field(second).querySelector('[data-log-surfaces-required]')?.textContent?.trim()).toBe(
+      'not required',
+    );
+  });
+
+  it('omits the surfaces field when a session declared none', () => {
+    const host = render({
+      kind: 'ok',
+      log: log([
+        session({ localId: 1, surfaces: [], surfacesRequired: true }),
+        session({ localId: 2, surfaces: null, surfacesRequired: false }),
+        session({ localId: 3, surfaces: ['  '] }),
+        session({ localId: 4 }),
+      ]),
+    });
+    for (const item of sessions(host)) {
+      expect(fieldKeys(item)).toEqual(['started']);
+      expect(item.querySelector('[data-field="surfaces"]')).toBeNull();
+      expect(item.querySelector('[data-log-surfaces-required]')).toBeNull();
+    }
+  });
 });
