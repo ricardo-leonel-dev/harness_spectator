@@ -135,7 +135,10 @@ frontend (separate project/process)
           {email, password} -> {accessToken, expiresAt}; 401 on bad credentials, 400 on a
           malformed body
         - GET /api/harness/projects: every non-deleted project, ordered by slug, as
-          [{slug, description, counts: {total, done, inProgress, blocked}}]
+          [{slug, description, counts: {total, done, inProgress, blocked}}]. `counts.total`
+          counts the project features that are neither soft-deleted nor `superseded`, the
+          same countable-feature rule the dashboard applies, so a project whose remaining
+          features are all done reports `done == total`.
         - GET /api/harness/projects/{slug}/state: {project, features, openSession,
           blockedFeatures} for that slug; 404 + JSON error for an unknown/deleted slug
         - GET /api/harness/projects/{slug}/features/{name}/log: {feature, sessions} for
@@ -276,7 +279,9 @@ project is chosen per request by slug (there is no configured `PROJECT_SLUG`). R
   paused session belongs to a blocked feature and is not the open one.
 - There is no blocked-features table: a blocked feature is `features.status = 'blocked'`, and its
   note is the latest `session_log_entries.entry` of that feature's latest session, or `""` if none.
-- Counts on `/api/harness/projects` are over non-deleted features (`total` includes every status).
+- Counts on `/api/harness/projects` are over the features that are neither soft-deleted nor
+  `superseded` (`total` leaves superseded features out, the same countable-feature rule the
+  dashboard applies).
 
 `migrations/0001_harness_schema.sql` is a test-only reproduction of the mirror tables and enum the
 reader uses, `migrations/0002_agent_runs.sql` reproduces the toolkit's `0004_agent_runs.sql`
